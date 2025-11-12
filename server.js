@@ -6,22 +6,19 @@ const rateLimit = require('express-rate-limit');
 const axios = require('axios');
 
 const app = express();
-// Confiar en el primer proxy (si se despliega detrás de uno, como Heroku, Vercel, etc.)
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 
 // --- Configuración de Instancias de Axios ---
-
-// Instancia para la API de Autenticación
+// MODIFICADO: URLs hardcoded como se solicitó
 const apiAuth = axios.create({
-    baseURL: process.env.API_AUTH_URL,
-    timeout: 10000 // 10 segundos de timeout
+    baseURL: 'https://bpdigital-api.bellinatiperez.com.br',
+    timeout: 10000
 });
 
-// Instancia para la API de Negociación
 const apiNegocie = axios.create({
-    baseURL: process.env.API_NEGOCIE_URL,
-    timeout: 15000 // 15 segundos de timeout
+    baseURL: 'https://api-negocie.bellinati.com.br',
+    timeout: 15000
 });
 
 // --- Middlewares ---
@@ -30,22 +27,14 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 100, // Límite de 100 solicitudes por IP
+    windowMs: 15 * 60 * 1000,
+    max: 100,
     message: 'Demasiadas solicitudes desde esta IP, por favor intente más tarde.'
 }));
 
-// --- Helper de Respuesta Estandarizada (Adaptado de tu referencia) ---
-/**
- * Envía una respuesta estandarizada para el LLM.
- * @param {object} res - El objeto de respuesta de Express.
- * @param {number} statusCode - Código de estado HTTP.
- * @param {string} title - Título para la respuesta markdown.
- * @param {object} rawData - Objeto con los datos crudos y/o mensaje.
- */
+// --- Helper de Respuesta Estandarizada ---
 const responder = (res, statusCode, title, rawData) => {
     const message = rawData.mensaje || rawData.msgRetorno || 'Operación completada.';
-
     const response = {
         raw: {
             status: statusCode >= 400 ? 'error' : 'exito',
@@ -59,41 +48,68 @@ const responder = (res, statusCode, title, rawData) => {
 };
 
 // --- Helper de Manejo de Errores de API ---
-/**
- * Maneja errores de Axios y los formatea usando el helper `responder`.
- */
 function handleApiError(res, error, title) {
     console.error(`[${title}] Error:`, error.message);
     let statusCode = 500;
     let mensaje = 'Ocurrió un error inesperado en el servidor.';
 
     if (error.response) {
-        // La solicitud se hizo y el servidor de la API respondió con un error
         console.error('API Response Error Data:', error.response.data);
         statusCode = error.response.status;
         mensaje = error.response.data.msgRetorno || error.response.data.message || 'Error de la API de negociación.';
-        
-        // Captura de errores de validación si existen
         if (error.response.data.errors) {
             mensaje += ` Detalles: ${JSON.stringify(error.response.data.errors)}`;
         }
     } else if (error.request) {
-        // La solicitud se hizo pero no se recibió respuesta
         console.error('API No Response:', error.request);
-        statusCode = 504; // Gateway Timeout
+        statusCode = 504;
         mensaje = 'No se recibió respuesta de la API de negociación. El servicio puede estar temporalmente caído.';
     } else {
-        // Error al configurar la solicitud
         mensaje = error.message;
     }
-
     return responder(res, statusCode, title, { mensaje });
 }
 
-// --- Helper de Autenticación de API ---
+// --- NUEVO: Helper de Consulta a Base de Datos (Placeholder) ---
+/**
+ * Simula la búsqueda de datos de usuario en tu base de datos usando el número de teléfono.
+ * @param {string} rawPhone - El número de teléfono del usuario.
+ * @returns {Promise<object|null>} - Un objeto con los datos del usuario (ej. cpf_cnpj) o null si no se encuentra.
+ */
+async function getUserDataFromDB(rawPhone) {
+    console.log(`Buscando datos en BD para el teléfono: ${rawPhone}`);
+    
+    // --- INICIO DEL PLACEHOLDER ---
+    // Aquí debes implementar la lógica real de tu base de datos.
+    // Ejemplo: const user = await TuModeloDeDB.findOne({ where: { telefono: rawPhone } });
+    // if (!user) { return null; }
+    // return { cpf_cnpj: user.cpf_cnpj, nombre: user.nombre };
+    
+    // Por ahora, simulamos una respuesta exitosa con un CPF/CNPJ de prueba.
+    // ¡REEMPLAZA ESTO CON TU LÓGICA DE BASE DE DATOS!
+    const simulacionDB = {
+        "5215512345678": { cpf_cnpj: "12345678900", nombre: "Usuario de Prueba 1" },
+        "5491112345678": { cpf_cnpj: "98765432100", nombre: "Usuario de Prueba 2" },
+        "default": { cpf_cnpj: "66993490587", nombre: "Usuario Default" } // CPF de la documentación
+    };
+
+    const userData = simulacionDB[rawPhone] || simulacionDB["default"];
+    
+    if (!userData) {
+        console.warn(`No se encontró usuario en la simulación de BD para: ${rawPhone}`);
+        return null;
+    }
+
+    console.log(`Usuario encontrado (simulado): ${userData.nombre} con CPF/CNPJ: ${userData.cpf_cnpj}`);
+    return Promise.resolve(userData);
+    // --- FIN DEL PLACEHOLDER ---
+}
+
+
+// --- Helper de Autenticación de API (Sin cambios) ---
 /**
  * Obtiene un token de autenticación para un CPF/CNPJ específico.
- * @param {string} cpf_cnpj - El CPF o CNPJ del cliente. [cite: 19]
+ * @param {string} cpf_cnpj - El CPF o CNPJ del cliente.
  * @returns {Promise<string>} - El token de acceso.
  */
 async function getAuthToken(cpf_cnpj) {
@@ -102,20 +118,15 @@ async function getAuthToken(cpf_cnpj) {
         AppId: process.env.API_APP_ID,
         AppPass: process.env.API_APP_PASS,
         Usuario: cpf_cnpj
-    }; 
+    };
 
     try {
         const response = await apiAuth.post(authUrl, body);
-        
-        // La documentación no especifica el campo del token en la respuesta.
-        // Asumiremos campos comunes como 'token' o 'access_token'.
         const token = response.data.token || response.data.access_token;
 
         if (token) {
             return token;
         }
-
-        // Fallback si la respuesta es solo el token (poco probable)
         if (typeof response.data === 'string' && response.data.length > 50) {
             return response.data;
         }
@@ -134,34 +145,37 @@ async function getAuthToken(cpf_cnpj) {
 
 app.get('/', (req, res) => {
     responder(res, 200, "API de Herramientas de Negociación", {
-        version: '1.0.0',
+        version: '2.0.0 (Auth por Teléfono)',
         status: 'Operacional',
-        endpoints: {
-            '/api/negociacao/buscar-credores': 'POST - Busca acreedores para un CPF/CNPJ.',
-            '/api/negociacao/buscar-dividas': 'POST - Busca deudas para un acreedor.',
-            '/api/negociacao/buscar-acordos': 'POST - Busca acuerdos existentes.',
-            '/api/negociacao/buscar-opcoes-pagamento': 'POST - Simula opciones de pago.',
-            '/api/negociacao/resumo-boleto': 'POST - (Paso intermedio) Obtiene resumen si es necesario.',
-            '/api/negociacao/emitir-boleto': 'POST - Emite el boleto para una opción seleccionada.',
-            '/api/negociacao/emitir-segunda-via': 'POST - Emite segunda vía de un acuerdo existente.',
-            '/api/negociacao/cancelar-acordo': 'POST - Cancela un acuerdo existente.',
-        }
+        // ... (endpoints)
     });
 });
 
 /**
  * HERRAMIENTA 1: Buscar Credores
- * [cite: 97, 102]
- * Corresponde al paso "Verificação de identidade"  del flujo.
  */
 app.post('/api/negociacao/buscar-credores', async (req, res) => {
-    const { cpf_cnpj } = req.body;
-    if (!cpf_cnpj) {
-        return responder(res, 400, "Error de Validación", { mensaje: 'El campo "cpf_cnpj" es obligatorio.' });
+    // 1. Extraer rawPhone
+    const { function_call_username } = req.body;
+    if (!function_call_username) {
+        return responder(res, 400, "Error de Validación", { mensaje: 'El campo "function_call_username" es obligatorio.' });
+    }
+    let rawPhone = function_call_username;
+    if (function_call_username.includes("--")) {
+        rawPhone = function_call_username.split("--").pop();
     }
 
     try {
-        const token = await getAuthToken(cpf_cnpj);
+        // 2. Buscar datos de usuario (CPF)
+        const userData = await getUserDataFromDB(rawPhone);
+        if (!userData || !userData.cpf_cnpj) {
+            return responder(res, 404, "Usuario no Encontrado", { mensaje: 'No se encontraron datos de usuario para el teléfono proporcionado.' });
+        }
+
+        // 3. Obtener token de API
+        const token = await getAuthToken(userData.cpf_cnpj);
+        
+        // 4. Llamar a la API de negocio
         const response = await apiNegocie.get('/api/v5/busca-credores', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -170,34 +184,46 @@ app.post('/api/negociacao/buscar-credores', async (req, res) => {
             return responder(res, 404, "Sin Resultados", { 
                 mensaje: "No se encontraron deudas disponibles para negociación para este CPF/CNPJ.",
                 ...response.data
-            }); 
+            });
         }
         
         return responder(res, 200, "Credores Encontrados", response.data);
 
     } catch (error) {
+        // Manejar errores de getAuthToken o handleApiError
         return handleApiError(res, error, "Erro ao Buscar Credores");
     }
 });
 
 /**
  * HERRAMIENTA 2: Buscar Dívidas
- * [cite: 135, 136]
- * Corresponde al paso "Informa valor da dívida"  del flujo.
  */
 app.post('/api/negociacao/buscar-dividas', async (req, res) => {
-    const { cpf_cnpj, financeira, crms } = req.body;
-    if (!cpf_cnpj || !financeira || !crms) {
-        return responder(res, 400, "Error de Validación", { mensaje: 'Los campos "cpf_cnpj", "financeira" y "crms" son obligatorios.' }); 
+    // 1. Extraer rawPhone y otros datos
+    const { function_call_username, financeira, crms } = req.body;
+    if (!function_call_username || !financeira || !crms) {
+        return responder(res, 400, "Error de Validación", { mensaje: 'Los campos "function_call_username", "financeira" y "crms" son obligatorios.' });
+    }
+    let rawPhone = function_call_username;
+    if (function_call_username.includes("--")) {
+        rawPhone = function_call_username.split("--").pop();
     }
 
     try {
-        const token = await getAuthToken(cpf_cnpj);
-        const body = { financeira, crms }; 
-        
+        // 2. Buscar datos de usuario (CPF)
+        const userData = await getUserDataFromDB(rawPhone);
+        if (!userData || !userData.cpf_cnpj) {
+            return responder(res, 404, "Usuario no Encontrado", { mensaje: 'No se encontraron datos de usuario para el teléfono proporcionado.' });
+        }
+
+        // 3. Obtener token de API
+        const token = await getAuthToken(userData.cpf_cnpj);
+
+        // 4. Llamar a la API de negocio
+        const body = { financeira, crms };
         const response = await apiNegocie.post('/api/v5/busca-divida', body, {
             headers: { 'Authorization': `Bearer ${token}` }
-        }); 
+        });
 
         return responder(res, 200, "Dívidas Encontradas", { dividas: response.data, mensaje: "Dívidas retornadas com sucesso." });
 
@@ -208,21 +234,33 @@ app.post('/api/negociacao/buscar-dividas', async (req, res) => {
 
 /**
  * HERRAMIENTA 3: Buscar Acordos (Existentes)
- * [cite: 201, 203]
  */
 app.post('/api/negociacao/buscar-acordos', async (req, res) => {
-    const { cpf_cnpj, financeira, crms } = req.body;
-    if (!cpf_cnpj || !financeira || !crms) {
-        return responder(res, 400, "Error de Validación", { mensaje: 'Los campos "cpf_cnpj", "financeira" y "crms" son obligatorios.' }); 
+    // 1. Extraer rawPhone y otros datos
+    const { function_call_username, financeira, crms } = req.body;
+    if (!function_call_username || !financeira || !crms) {
+        return responder(res, 400, "Error de Validación", { mensaje: 'Los campos "function_call_username", "financeira" y "crms" son obligatorios.' });
+    }
+    let rawPhone = function_call_username;
+    if (function_call_username.includes("--")) {
+        rawPhone = function_call_username.split("--").pop();
     }
 
     try {
-        const token = await getAuthToken(cpf_cnpj);
-        const body = { financeira, crms }; 
-        
+        // 2. Buscar datos de usuario (CPF)
+        const userData = await getUserDataFromDB(rawPhone);
+        if (!userData || !userData.cpf_cnpj) {
+            return responder(res, 404, "Usuario no Encontrado", { mensaje: 'No se encontraron datos de usuario para el teléfono proporcionado.' });
+        }
+
+        // 3. Obtener token de API
+        const token = await getAuthToken(userData.cpf_cnpj);
+
+        // 4. Llamar a la API de negocio
+        const body = { financeira, crms };
         const response = await apiNegocie.post('/api/v5/busca-acordo', body, {
             headers: { 'Authorization': `Bearer ${token}` }
-        }); 
+        });
 
         return responder(res, 200, "Acordos Encontrados", { acordos: response.data, mensaje: "Acordos existentes retornados." });
 
@@ -233,18 +271,29 @@ app.post('/api/negociacao/buscar-acordos', async (req, res) => {
 
 /**
  * HERRAMIENTA 4: Buscar Opções de Pagamento
- * [cite: 297, 298]
- * Corresponde a "Apresenta oferta pagamento total" [cite: 835] y "Apresenta oferta parcelada"[cite: 849].
  */
 app.post('/api/negociacao/buscar-opcoes-pagamento', async (req, res) => {
-    // Extraer todos los campos necesarios del body [cite: 317]
-    const { cpf_cnpj, Crm, Carteira, Contratos, DataVencimento, ValorEntrada, QuantidadeParcela, ValorParcela } = req.body;
-    if (!cpf_cnpj || Crm === undefined || Carteira === undefined || !Contratos) {
-        return responder(res, 400, "Error de Validación", { mensaje: 'Los campos "cpf_cnpj", "Crm", "Carteira" y "Contratos" son obligatorios.' });
+    // 1. Extraer rawPhone y otros datos
+    const { function_call_username, Crm, Carteira, Contratos, DataVencimento, ValorEntrada, QuantidadeParcela, ValorParcela } = req.body;
+    if (!function_call_username || Crm === undefined || Carteira === undefined || !Contratos) {
+        return responder(res, 400, "Error de Validación", { mensaje: 'Los campos "function_call_username", "Crm", "Carteira" y "Contratos" son obligatorios.' });
+    }
+    let rawPhone = function_call_username;
+    if (function_call_username.includes("--")) {
+        rawPhone = function_call_username.split("--").pop();
     }
 
     try {
-        const token = await getAuthToken(cpf_cnpj);
+        // 2. Buscar datos de usuario (CPF)
+        const userData = await getUserDataFromDB(rawPhone);
+        if (!userData || !userData.cpf_cnpj) {
+            return responder(res, 404, "Usuario no Encontrado", { mensaje: 'No se encontraron datos de usuario para el teléfono proporcionado.' });
+        }
+
+        // 3. Obtener token de API
+        const token = await getAuthToken(userData.cpf_cnpj);
+        
+        // 4. Llamar a la API de negocio
         const body = {
             Crm,
             Carteira,
@@ -253,11 +302,11 @@ app.post('/api/negociacao/buscar-opcoes-pagamento', async (req, res) => {
             ValorEntrada: ValorEntrada || 0,
             QuantidadeParcela: QuantidadeParcela || 0,
             ValorParcela: ValorParcela || 0
-        }; 
+        };
         
         const response = await apiNegocie.post('/api/v5/busca-opcao-pagamento', body, {
             headers: { 'Authorization': `Bearer ${token}` }
-        }); 
+        });
 
         return responder(res, 200, "Opções de Pagamento Calculadas", response.data);
 
@@ -267,30 +316,42 @@ app.post('/api/negociacao/buscar-opcoes-pagamento', async (req, res) => {
 });
 
 /**
- * HERRAMIENTA 5a: Resumo Boleto (Paso intermedio obligatorio si "chamarResumoBoleto" es true)
- * [cite: 530, 532]
+ * HERRAMIENTA 5a: Resumo Boleto
  */
 app.post('/api/negociacao/resumo-boleto', async (req, res) => {
-    const { cpf_cnpj, Crm, CodigoCarteira, Contrato, CodigoOpcao } = req.body;
-    if (!cpf_cnpj || Crm === undefined || CodigoCarteira === undefined || !Contrato || !CodigoOpcao) {
-        return responder(res, 400, "Error de Validación", { mensaje: 'Campos obligatorios: "cpf_cnpj", "Crm", "CodigoCarteira", "Contrato", "CodigoOpcao".' });
+    // 1. Extraer rawPhone y otros datos
+    const { function_call_username, Crm, CodigoCarteira, Contrato, CodigoOpcao } = req.body;
+    if (!function_call_username || Crm === undefined || CodigoCarteira === undefined || !Contrato || !CodigoOpcao) {
+        return responder(res, 400, "Error de Validación", { mensaje: 'Campos obligatorios: "function_call_username", "Crm", "CodigoCarteira", "Contrato", "CodigoOpcao".' });
+    }
+    let rawPhone = function_call_username;
+    if (function_call_username.includes("--")) {
+        rawPhone = function_call_username.split("--").pop();
     }
 
     try {
-        const token = await getAuthToken(cpf_cnpj);
+        // 2. Buscar datos de usuario (CPF)
+        const userData = await getUserDataFromDB(rawPhone);
+        if (!userData || !userData.cpf_cnpj) {
+            return responder(res, 404, "Usuario no Encontrado", { mensaje: 'No se encontraron datos de usuario para el teléfono proporcionado.' });
+        }
+
+        // 3. Obtener token de API
+        const token = await getAuthToken(userData.cpf_cnpj);
+
+        // 4. Llamar a la API de negocio (usando el CPF de la BD)
         const body = {
             Crm,
             CodigoCarteira,
-            CNPJ_CPF: cpf_cnpj,
+            CNPJ_CPF: userData.cpf_cnpj, // Usamos el CPF de la BD
             Contrato,
             CodigoOpcao
-        }; 
+        };
         
         const response = await apiNegocie.post('/api/v5/resumo-boleto', body, {
             headers: { 'Authorization': `Bearer ${token}` }
-        }); 
+        });
 
-        // Esta respuesta incluye el nuevo 'identificador' [cite: 555]
         return responder(res, 200, "Resumo do Boleto Gerado", response.data);
 
     } catch (error) {
@@ -299,22 +360,34 @@ app.post('/api/negociacao/resumo-boleto', async (req, res) => {
 });
 
 /**
- * HERRAMIENTA 5b: Emitir Boleto (Paso final de la negociación)
- * [cite: 588, 589]
- * Corresponde a "Confirma pagamento".
+ * HERRAMIENTA 5b: Emitir Boleto
  */
 app.post('/api/negociacao/emitir-boleto', async (req, res) => {
-    const { cpf_cnpj, Crm, Carteira, Contrato, Valor, Parcelas, DataVencimento, Identificador, fase } = req.body;
-    if (!cpf_cnpj || Crm === undefined || Carteira === undefined || !Contrato || Valor === undefined || Parcelas === undefined || !DataVencimento || !Identificador) {
-        return responder(res, 400, "Error de Validación", { mensaje: 'Faltan campos obligatorios para emitir el boleto.' }); 
+    // 1. Extraer rawPhone y otros datos
+    const { function_call_username, Crm, Carteira, Contrato, Valor, Parcelas, DataVencimento, Identificador, fase } = req.body;
+    if (!function_call_username || Crm === undefined || Carteira === undefined || !Contrato || Valor === undefined || Parcelas === undefined || !DataVencimento || !Identificador) {
+        return responder(res, 400, "Error de Validación", { mensaje: 'Faltan campos obligatorios para emitir el boleto.' });
+    }
+    let rawPhone = function_call_username;
+    if (function_call_username.includes("--")) {
+        rawPhone = function_call_username.split("--").pop();
     }
 
     try {
-        const token = await getAuthToken(cpf_cnpj);
+        // 2. Buscar datos de usuario (CPF)
+        const userData = await getUserDataFromDB(rawPhone);
+        if (!userData || !userData.cpf_cnpj) {
+            return responder(res, 404, "Usuario no Encontrado", { mensaje: 'No se encontraron datos de usuario para el teléfono proporcionado.' });
+        }
+
+        // 3. Obtener token de API
+        const token = await getAuthToken(userData.cpf_cnpj);
+
+        // 4. Llamar a la API de negocio (usando el CPF de la BD)
         const body = {
             Crm,
             Carteira,
-            CNPJ_CPF: cpf_cnpj,
+            CNPJ_CPF: userData.cpf_cnpj, // Usamos el CPF de la BD
             fase: fase || "",
             Contrato,
             Valor,
@@ -322,11 +395,11 @@ app.post('/api/negociacao/emitir-boleto', async (req, res) => {
             DataVencimento,
             Identificador,
             TipoContrato: null
-        }; 
+        };
         
         const response = await apiNegocie.post('/api/v5/emitir-boleto', body, {
             headers: { 'Authorization': `Bearer ${token}` }
-        }); 
+        });
 
         return responder(res, 201, "Boleto Emitido com Sucesso", response.data);
 
@@ -337,26 +410,40 @@ app.post('/api/negociacao/emitir-boleto', async (req, res) => {
 
 /**
  * HERRAMIENTA 6: Emitir Segunda Via
- * [cite: 629, 635]
  */
 app.post('/api/negociacao/emitir-segunda-via', async (req, res) => {
-    // Este endpoint requiere muchos campos del acuerdo original [cite: 638-648]
-    const { cpf_cnpj, Crm, CodigoCarteira, Id, Contrato, DataVencimento, ValorBoleto, TipoBoleto } = req.body;
-    if (!cpf_cnpj || Crm === undefined || CodigoCarteira === undefined || !Id || !Contrato || !DataVencimento || ValorBoleto === undefined || !TipoBoleto) {
+    // 1. Extraer rawPhone y otros datos
+    const { function_call_username, Crm, CodigoCarteira, Id, Contrato, DataVencimento, ValorBoleto, TipoBoleto } = req.body;
+    if (!function_call_username || Crm === undefined || CodigoCarteira === undefined || !Id || !Contrato || !DataVencimento || ValorBoleto === undefined || !TipoBoleto) {
         return responder(res, 400, "Error de Validación", { mensaje: 'Faltan campos obligatorios para emitir la segunda vía.' });
+    }
+    let rawPhone = function_call_username;
+    if (function_call_username.includes("--")) {
+        rawPhone = function_call_username.split("--").pop();
     }
 
     try {
-        const token = await getAuthToken(cpf_cnpj);
+        // 2. Buscar datos de usuario (CPF)
+        const userData = await getUserDataFromDB(rawPhone);
+        if (!userData || !userData.cpf_cnpj) {
+            return responder(res, 404, "Usuario no Encontrado", { mensaje: 'No se encontraron datos de usuario para el teléfono proporcionado.' });
+        }
+
+        // 3. Obtener token de API
+        const token = await getAuthToken(userData.cpf_cnpj);
+        
+        // 4. Llamar a la API de negocio (usando el CPF de la BD)
         const body = {
-            ...req.body, // Pasa todos los campos recibidos
-            CNPJ_CPF: cpf_cnpj,
+            ...req.body,
+            CNPJ_CPF: userData.cpf_cnpj, // Usamos el CPF de la BD
             Fase: req.body.Fase || ""
         };
+        // No es necesario eliminar function_call_username del body,
+        // la API de destino ignorará los campos extra.
         
         const response = await apiNegocie.post('/api/v5/emitir-boleto-segunda-via', body, {
             headers: { 'Authorization': `Bearer ${token}` }
-        }); 
+        });
 
         return responder(res, 200, "Segunda Via de Boleto Emitida", response.data);
 
@@ -367,19 +454,30 @@ app.post('/api/negociacao/emitir-segunda-via', async (req, res) => {
 
 /**
  * HERRAMIENTA 7: Cancelar Acordo
- * [cite: 285, 287]
- * Solo usar si 'permiteCancelamento' es true en 'busca-acordo'[cite: 286].
  */
 app.post('/api/negociacao/cancelar-acordo', async (req, res) => {
-    const { cpf_cnpj, idAcordo, crm } = req.body;
-    if (!cpf_cnpj || !idAcordo || crm === undefined) {
-        return responder(res, 400, "Error de Validación", { mensaje: 'Campos "cpf_cnpj", "idAcordo" y "crm" son obligatorios.' }); 
+    // 1. Extraer rawPhone y otros datos
+    const { function_call_username, idAcordo, crm } = req.body;
+    if (!function_call_username || !idAcordo || crm === undefined) {
+        return responder(res, 400, "Error de Validación", { mensaje: 'Campos "function_call_username", "idAcordo" y "crm" son obligatorios.' });
+    }
+    let rawPhone = function_call_username;
+    if (function_call_username.includes("--")) {
+        rawPhone = function_call_username.split("--").pop();
     }
 
     try {
-        const token = await getAuthToken(cpf_cnpj);
-        const body = { idAcordo, crm }; 
-        
+        // 2. Buscar datos de usuario (CPF)
+        const userData = await getUserDataFromDB(rawPhone);
+        if (!userData || !userData.cpf_cnpj) {
+            return responder(res, 404, "Usuario no Encontrado", { mensaje: 'No se encontraron datos de usuario para el teléfono proporcionado.' });
+        }
+
+        // 3. Obtener token de API
+        const token = await getAuthToken(userData.cpf_cnpj);
+
+        // 4. Llamar a la API de negocio
+        const body = { idAcordo, crm };
         const response = await apiNegocie.post('/api/v5/cancela-acordo', body, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -392,7 +490,7 @@ app.post('/api/negociacao/cancelar-acordo', async (req, res) => {
 });
 
 
-// --- Manejadores de Errores Globales (de tu referencia) ---
+// --- Manejadores de Errores Globales ---
 app.use((err, req, res, next) => {
     console.error(err.stack);
     responder(res, 500, "Error Interno Grave", {
@@ -400,14 +498,13 @@ app.use((err, req, res, next) => {
     });
 });
 
-app.use( (req, res) => {
+app.use((req, res) => {
     responder(res, 404, "Endpoint no Encontrado", {
         mensaje: `La ruta ${req.method} ${req.originalUrl} no existe en esta API.`
     });
 });
 
 // --- Iniciar Servidor ---
-
 app.listen(PORT, () => {
-    console.log(`Servidor de Herramientas de Negociación corriendo en el puerto ${PORT}`);
+    console.log(`Servidor de Herramientas de Negociación (v2) corriendo en el puerto ${PORT}`);
 });
