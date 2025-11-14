@@ -32,16 +32,6 @@ app.use(rateLimit({
     message: 'Demasiadas solicitudes desde esta IP, por favor intente más tarde.'
 }));
 
-app.get('/', (req, res) => {
-    responder(res, 200, "API de Plugin LLM", {
-        version: '1.0.0',
-        endpoints: {
-            '/api/negociacao/buscar-credores':"POST: Realiza una consulta de credito"
-        }
-    });
-});
-
-
 // --- Helper de Respuesta Estandarizada ---
 const responder = (res, statusCode, title, rawData) => {
     const message = rawData.mensaje || rawData.msgRetorno || 'Operación completada.';
