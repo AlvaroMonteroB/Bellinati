@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3000;
 // MODIFICADO: URLs hardcoded como se solicitó
 const apiAuth = axios.create({
     baseURL: 'https://bpdigital-api.bellinatiperez.com.br',
-    timeout: 10000
+    timeout: 30000
 });
 
 const apiNegocie = axios.create({
@@ -135,8 +135,22 @@ async function getAuthToken(cpf_cnpj) {
         throw new Error('No se pudo extraer el token de la respuesta de autenticación.');
         
     } catch (error) {
-        console.error('Error al obtener token de autenticación:', error.response ? error.response.data : error.message);
-        throw new Error('Fallo al autenticar con la API. Verifique las credenciales y el CPF/CNPJ.');
+        console.error('Error DETALLADO al obtener token de autenticación:');
+        if (error.response) {
+            // El servidor respondió con un status code (ej. 403, 500)
+            console.error('Status:', error.response.status);
+            console.error('Data:', error.response.data);
+        } else if (error.request) {
+            // La solicitud se hizo pero no hubo respuesta (ej. timeout, IP bloqueada por firewall)
+            console.error('La solicitud se hizo pero no se recibió respuesta (Timeout o Firewall)');
+        } else {
+            // Algo más falló al configurar la solicitud
+            console.error('Error de configuración de Axios:', error.message);
+        }
+        
+        // IMPORTANTE: Re-lanzamos el error *original* de axios
+        // para que handleApiError pueda leer 'error.response' correctamente.
+        throw error;
     }
 }
 
@@ -184,7 +198,7 @@ app.post('/api/negociacao/buscar-credores', async (req, res) => {
         if (normalize(cpf_cnpj_db) !== normalize(cpf_cnpj_provided)) {
             console.warn(`Fallo de validación. BD: ${normalize(cpf_cnpj_db)}, Proporcionado: ${normalize(cpf_cnpj_provided)}`);
             return responder(res, 403, "Validación Fallida", { 
-                mensaje: "El CPF proporcionado no coincide con nuestros registros para este número de teléfono. El deudor y el usuario no parecen ser el mismo." 
+                mensaje: "O número do CPF fornecido não corresponde aos nossos registros para este número de telefone. O devedor e o usuário não parecem ser a mesma pessoa." 
             });
         }
         // --- FIN DE LA NUEVA LÓGICA ---
