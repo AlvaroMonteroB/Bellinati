@@ -36,7 +36,7 @@ app.get('/', (req, res) => {
     responder(res, 200, "API de Plugin LLM", {
         version: '1.0.0',
         endpoints: {
-            '/api/negociacao/buscar-credores'
+            '/api/negociacao/buscar-credores':"POST: Realiza una consulta de credito"
         }
     });
 });
