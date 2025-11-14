@@ -88,7 +88,7 @@ async function getUserDataFromDB(rawPhone) {
     // Por ahora, simulamos una respuesta exitosa con un CPF/CNPJ de prueba.
     // ¡REEMPLAZA ESTO CON TU LÓGICA DE BASE DE DATOS!
     const simulacionDB = {
-        "5215512345678": { cpf_cnpj: "12345678900", nombre: "Usuario de Prueba 1" },
+        "525510609610": { cpf_cnpj: "08921114882", nombre: "Alvaro Montero" },
         "5491112345678": { cpf_cnpj: "98765432100", nombre: "Usuario de Prueba 2" },
         "default": { cpf_cnpj: "66993490587", nombre: "Usuario Default" } // CPF de la documentación
     };
@@ -155,34 +155,51 @@ app.get('/', (req, res) => {
  * HERRAMIENTA 1: Buscar Credores
  */
 app.post('/api/negociacao/buscar-credores', async (req, res) => {
-    // 1. Extraer rawPhone
-    const { function_call_username } = req.body;
-    if (!function_call_username) {
-        return responder(res, 400, "Error de Validación", { mensaje: 'El campo "function_call_username" es obligatorio.' });
+    // 1. Extraer rawPhone y CPF proporcionado
+    const { function_call_username, cpf_cnpj } = req.body;
+    if (!function_call_username || !cpf_cnpj) {
+        return responder(res, 400, "Error de Validación", { mensaje: 'Los campos "function_call_username" y "cpf_cnpj" son obligatorios.' });
     }
+    
     let rawPhone = function_call_username;
     if (function_call_username.includes("--")) {
         rawPhone = function_call_username.split("--").pop();
     }
 
+    // --- NUEVA LÓGICA DE VALIDACIÓN ---
     try {
-        // 2. Buscar datos de usuario (CPF)
+        // 2. Buscar datos de usuario (CPF) desde la BD usando el teléfono
         const userData = await getUserDataFromDB(rawPhone);
         if (!userData || !userData.cpf_cnpj) {
             return responder(res, 404, "Usuario no Encontrado", { mensaje: 'No se encontraron datos de usuario para el teléfono proporcionado.' });
         }
 
-        // 3. Obtener token de API
-        const token = await getAuthToken(userData.cpf_cnpj);
+        // 3. Comparar CPF de la BD con el CPF proporcionado por el usuario
+        const cpf_cnpj_db = userData.cpf_cnpj;
+        const cpf_cnpj_provided = cpf_cnpj;
         
-        // 4. Llamar a la API de negocio
+        // Normalizar (quitar puntos, guiones, etc.) antes de comparar
+        const normalize = (str) => String(str).replace(/[.-]/g, '');
+
+        if (normalize(cpf_cnpj_db) !== normalize(cpf_cnpj_provided)) {
+            console.warn(`Fallo de validación. BD: ${normalize(cpf_cnpj_db)}, Proporcionado: ${normalize(cpf_cnpj_provided)}`);
+            return responder(res, 403, "Validación Fallida", { 
+                mensaje: "El CPF proporcionado no coincide con nuestros registros para este número de teléfono. El deudor y el usuario no parecen ser el mismo." 
+            });
+        }
+        // --- FIN DE LA NUEVA LÓGICA ---
+
+        // 4. Si la validación es exitosa, obtener token de API (usando el CPF validado de la BD)
+        const token = await getAuthToken(cpf_cnpj_db);
+        
+        // 5. Llamar a la API de negocio
         const response = await apiNegocie.get('/api/v5/busca-credores', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
         if (!response.data.credores || response.data.credores.length === 0) {
             return responder(res, 404, "Sin Resultados", { 
-                mensaje: "No se encontraron deudas disponibles para negociación para este CPF/CNPJ.",
+                mensaje: "Validación exitosa, pero no se encontraron deudas disponibles para negociación para este CPF/CNPJ.",
                 ...response.data
             });
         }
@@ -190,7 +207,7 @@ app.post('/api/negociacao/buscar-credores', async (req, res) => {
         return responder(res, 200, "Credores Encontrados", response.data);
 
     } catch (error) {
-        // Manejar errores de getAuthToken o handleApiError
+        // Manejar errores de getUserDataFromDB, getAuthToken o handleApiError
         return handleApiError(res, error, "Erro ao Buscar Credores");
     }
 });
@@ -505,6 +522,12 @@ app.use((req, res) => {
 });
 
 // --- Iniciar Servidor ---
+//ELIMINAMOS ESTO:
 app.listen(PORT, () => {
     console.log(`Servidor de Herramientas de Negociación (v2) corriendo en el puerto ${PORT}`);
 });
+
+
+// AÑADIMOS ESTO para Vercel:
+// Exportar la app para que Vercel la pueda usar como una función serverless
+module.exports = app;
