@@ -217,13 +217,89 @@ app.post('/api/negociacao/buscar-credores', async (req, res) => {
                 ...response.data
             });
         }
+
+        console.log(`Encontrados ${response.data.credores.length} acreedores. Buscando deudas detalladas...`);
         
-        return responder(res, 200, "Credores Encontrados", response.data);
+        const credoresEnriquecidos = await Promise.all(response.data.credores.map(async (credor) => {
+            try {
+                const bodyDivida = {
+                    financeira: credor.financeira,
+                    crms: credor.crms
+                };
+
+                // Llamada interna a busca-divida
+                const responseDivida = await apiNegocie.post('/api/v5/busca-divida', bodyDivida, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                // Retornamos el credor original + una nueva propiedad 'dividas'
+                return {
+                    ...credor,
+                    dividas: responseDivida.data // Aquí viene el detalle de las deudas (monto, contratos, etc.)
+                };
+
+            } catch (err) {
+                console.error(`Error al obtener deudas para ${credor.financeira}:`, err.message);
+                // Si falla la búsqueda de deuda, devolvemos el credor pero con lista vacía y error
+                return {
+                    ...credor,
+                    dividas: [],
+                    errorDetalle: "No se pudo obtener el detalle de la deuda."
+                };
+            }
+        }));
+
+        let reportText = `Se han encontrado ${credoresEnriquecidos.length} acreedores con deudas pendientes:\n\n`;
+
+        credoresEnriquecidos.forEach((credor, index) => {
+            reportText += `### ${index + 1}. Acreedor: ${credor.financeira || 'Desconocido'}\n`;
+            
+            if (credor.errorDetalle) {
+                reportText += `- *Error consultando deudas:* ${credor.errorDetalle}\n`;
+            } else if (!credor.dividas || credor.dividas.length === 0) {
+                reportText += `- *No se encontraron deudas detalladas activas.*\n`;
+            } else {
+                // Iteramos sobre las deudas (dividas) encontradas para este acreedor
+                credor.dividas.forEach((divida) => {
+                    reportText += `- **Deuda Total Agrupada:** R$ ${divida.valor} (ID: ${divida.id})\n`;
+                    
+                    if (divida.contratos && divida.contratos.length > 0) {
+                        reportText += `  **Detalle de Contratos:**\n`;
+                        divida.contratos.forEach(contrato => {
+                            reportText += `  - Producto: ${contrato.produto}\n`;
+                            reportText += `    Contrato: ${contrato.numero || contrato.documento || 'N/A'}\n`;
+                            reportText += `    Valor Original: R$ ${contrato.valor}\n`;
+                            reportText += `    Días de Atraso: ${contrato.diasAtraso}\n`;
+                        });
+                    } else {
+                        reportText += `  - (Sin detalle de contratos individuales)\n`;
+                    }
+                    reportText += `\n`;
+                });
+            }
+            reportText += `---\n`;
+        });
+
+        // Construir respuesta final enriquecida
+        const responseData = {
+            ...response.data,
+            credores: credoresEnriquecidos,
+            // Aquí inyectamos el texto generado para que el helper responder lo use en el campo 'markdown'
+            mensaje: reportText 
+        };
+        
+        
+        
+        return responder(res, 200, "Credores y Deudas Encontrados", responseData);
 
     } catch (error) {
         // Manejar errores de getUserDataFromDB, getAuthToken o handleApiError
         return handleApiError(res, error, "Erro ao Buscar Credores");
     }
+        
+
+    
+    
 });
 
 /**
