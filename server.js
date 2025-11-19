@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3000;
 // MODIFICADO: URLs hardcoded como se solicitó
 const apiAuth = axios.create({
     baseURL: 'https://bpdigital-api.bellinatiperez.com.br',
-    timeout: 30000
+    timeout: 25000
 });
 
 const apiNegocie = axios.create({
@@ -88,7 +88,7 @@ async function getUserDataFromDB(rawPhone) {
     // Por ahora, simulamos una respuesta exitosa con un CPF/CNPJ de prueba.
     // ¡REEMPLAZA ESTO CON TU LÓGICA DE BASE DE DATOS!
     const simulacionDB = {
-        "525510609610": { cpf_cnpj: "08921114882", nombre: "Alvaro Montero" },
+        "525510609610":{cpf_cnpj:"42154393888",nombre:"Alvaro Montero"},//"525510609610": { cpf_cnpj: "08921114882", nombre: "Alvaro Montero" },
         "5491112345678": { cpf_cnpj: "98765432100", nombre: "Usuario de Prueba 2" },
         "default": { cpf_cnpj: "66993490587", nombre: "Usuario Default" } // CPF de la documentación
     };
