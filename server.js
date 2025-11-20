@@ -164,22 +164,27 @@ async function obtenerContextoDeuda(function_call_username) {
         throw new Error("El acreedor no tiene deudas detalladas en Busca Divida.");
     }
 
-    const deudaPrincipal = dividas[0];
+    // --- RECOLECCIÓN DE CONTRATOS ---
+    // IMPORTANTE: 'Contratos' para simulación debe ser Array de Strings (Documentos), NO IDs.
     
-    // Extracción de Datos Críticos:
-    
-    // 1. Contratos IDs (Int32) -> CRÍTICO para 'Busca Opcao Pagamento' (evita el error Int32)
-    const contratosIds = deudaPrincipal.contratos
-        .map(c => c.id)
-        .filter(id => id !== undefined && id !== null);
+    let contratosDocs = []; // Array de Strings (ej: ["29027...", "29028..."])
+    let fase = ""; 
 
-    // 2. Contratos Documentos (String) -> CRÍTICO para 'Emitir Boleto'
-    const contratosDocs = deudaPrincipal.contratos.map(c => c.documento || c.numero);
-    
-    // 3. Fase -> Dato importante para emisión
-    const fase = deudaPrincipal.fase || "";
+    dividas.forEach(deuda => {
+        if (!fase && deuda.fase) fase = deuda.fase; // Capturar fase si aún no tenemos
 
-    console.log(`DEBUG CONTEXTO RECUPERADO - Fase: ${fase}, Carteira: ${carteiraId}, Contratos(Num): ${contratosIds.length}`);
+        if (deuda.contratos && Array.isArray(deuda.contratos)) {
+            deuda.contratos.forEach(c => {
+                // Usamos el documento/numero para ambos casos (Simulación y Emisión) según documentación
+                const doc = c.documento || c.numero;
+                if (doc) {
+                    contratosDocs.push(String(doc)); // Aseguramos que sea String
+                }
+            });
+        }
+    });
+
+    console.log(`DEBUG CONTEXTO RECUPERADO - Fase: ${fase}, Carteira: ${carteiraId}, Total Contratos (Docs): ${contratosDocs.length}`);
 
     return {
         token,
@@ -188,10 +193,12 @@ async function obtenerContextoDeuda(function_call_username) {
         Crm: credor.crms[0], 
         Carteira: carteiraId,
         fase: fase,
-        ContratosSimulacion: contratosIds, // Array de Enteros
-        ContratoEmision: contratosDocs[0]  // String
+        ContratosSimulacion: contratosDocs, // Ahora es Array de Strings (Documentos)
+        ContratoEmision: contratosDocs[0]   // String (Principal)
     };
 }
+
+
 
 
 // --- Rutas de la API ---
@@ -265,11 +272,12 @@ app.post('/api/negociacao/buscar-opcoes-pagamento', async (req, res) => {
         // 1. Recuperar Credenciales y Datos de API (Auth -> Credores -> Divida)
         const ctx = await obtenerContextoDeuda(function_call_username);
 
-        // 2. Construir Body usando los datos FRESC y REALES
+        // 2. Construir Body usando los datos FRESCOS y REALES
+        // NOTA: Contratos ahora es Array de Strings (Documentos)
         const bodySimulacion = {
             Crm: ctx.Crm,
             Carteira: ctx.Carteira,
-            Contratos: ctx.ContratoEmision, // IDs numéricos (Int32)
+            Contratos: ctx.ContratosSimulacion, 
             DataVencimento: DataVencimento || null,
             ValorEntrada: ValorEntrada || 0,
             QuantidadeParcela: QuantidadeParcela || 0,
