@@ -6,11 +6,12 @@ const rateLimit = require('express-rate-limit');
 const axios = require('axios');
 
 const app = express();
+app.use(express.json()); 
+app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 
 // --- Configuración de Instancias de Axios ---
-// URLs reales de producción
 const apiAuth = axios.create({
     baseURL: 'https://bpdigital-api.bellinatiperez.com.br',
     timeout: 25000
@@ -32,11 +33,9 @@ app.use(rateLimit({
     message: 'Demasiadas solicitudes desde esta IP, por favor intente más tarde.'
 }));
 
-// Log de IP para depuración
 app.use((req, res, next) => {
-  const ipDesdeHeader = req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null;
-  const ipReal = req.ip || ipDesdeHeader;
-  console.log(`[IP-DEBUG] Ruta: ${req.path} | IP Real del Cliente: ${ipReal}`);
+  const ipReal = req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : req.ip;
+  console.log(`[IP-DEBUG] Ruta: ${req.path} | IP Cliente: ${ipReal}`);
   next();
 });
 
@@ -44,10 +43,7 @@ app.use((req, res, next) => {
 const responder = (res, statusCode, title, rawData) => {
     const message = rawData.mensaje || rawData.msgRetorno || 'Operación completada.';
     const response = {
-        raw: {
-            status: statusCode >= 400 ? 'error' : 'exito',
-            ...rawData
-        },
+        raw: { status: statusCode >= 400 ? 'error' : 'exito', ...rawData },
         markdown: `**${title}**\n\n${message}`,
         type: "markdown",
         desc: `**${title}**\n\n${message}`
@@ -61,33 +57,40 @@ function handleApiError(res, error, title) {
     let mensaje = 'Ocurrió un error inesperado en el servidor.';
 
     if (error.response) {
-        console.error('API Response Error Data:', error.response.data);
+        console.error('API Data:', error.response.data);
         statusCode = error.response.status;
         mensaje = error.response.data.msgRetorno || error.response.data.message || 'Error de la API de negociación.';
-        if (error.response.data.errors) {
-            mensaje += ` Detalles: ${JSON.stringify(error.response.data.errors)}`;
-        }
     } else if (error.request) {
-        console.error('API No Response:', error.request);
         statusCode = 504;
-        mensaje = 'No se recibió respuesta de la API de negociación. El servicio puede estar temporalmente caído o bloqueado por firewall.';
+        mensaje = 'La API de negociación no respondió a tiempo (Timeout/Firewall).';
     } else {
         mensaje = error.message;
     }
     return responder(res, statusCode, title, { mensaje });
 }
 
-// --- 1. Base de Datos Simulada (ÚNICA PARTE DUMMY) ---
-// Aquí es donde conectarías tu MySQL/Postgres/MongoDB real.
+// --- 1. Base de Datos Simulada ---
 async function getUserDataFromDB(rawPhone) {
     console.log(`Buscando datos en BD para el teléfono: ${rawPhone}`);
     
-    // DATOS SIMULADOS DE LA BD
+    // DATOS SIMULADOS DE LA BD (Teléfono -> CPF)
     const simulacionDB = {
-        "42154393888":{cpf_cnpj:"42154393888",nombre:"Alvaro Montero"},//"525510609610": { cpf_cnpj: "08921114882", nombre: "Alvaro Montero" },
+        "42154393888": { cpf_cnpj: "42154393888", nombre: "Alvaro Montero" },
         "98765432100": { cpf_cnpj: "98765432100", nombre: "Usuario de Prueba 2" },
-        "02604738554":{cpf_cnpj:"02604738554",nombre:"Alvaro Montero"},
-        "default": { cpf_cnpj: "02637364238", nombre: "Usuario Default" } // CPF de la documentación
+        "02604738554": { cpf_cnpj: "02604738554", nombre: "Alvaro Montero" },
+        "06212643342": { cpf_cnpj: "06212643342", nombre: "Usuario Test 062" },
+        "52116745888": { cpf_cnpj: "52116745888", nombre: "Usuario Test 521" },
+        "12144201684": { cpf_cnpj: "12144201684", nombre: "Usuario Test 121" },
+        "46483299885": { cpf_cnpj: "46483299885", nombre: "Usuario Test 464" },
+        "26776559856": { cpf_cnpj: "26776559856", nombre: "Usuario Test 267" },
+        "04513675020": { cpf_cnpj: "04513675020", nombre: "Usuario Test 045" },
+        "02637364238": { cpf_cnpj: "02637364238", nombre: "Usuario Test 0263" },
+        "06430897052": { cpf_cnpj: "06430897052", nombre: "Usuario Test 064" },
+        "10173421997": { cpf_cnpj: "10173421997", nombre: "Usuario Test 101" },
+        "04065282330": { cpf_cnpj: "04065282330", nombre: "Usuario Test 040" },
+        "09241820918": { cpf_cnpj: "09241820918", nombre: "Usuario Test 092" },
+        "63618955308": { cpf_cnpj: "63618955308", nombre: "Usuario Test 636" },
+        "default": { cpf_cnpj: "02637364238", nombre: "Usuario Default" }
     };
     
     const userData = simulacionDB[rawPhone] || simulacionDB["default"];
@@ -101,71 +104,56 @@ async function getUserDataFromDB(rawPhone) {
 
 // --- 2. Autenticación Real ---
 async function getAuthToken(cpf_cnpj) {
-    const authUrl = '/api/Login/v5/Authentication';
-    const body = {
-        AppId: process.env.API_APP_ID,
-        AppPass: process.env.API_APP_PASS,
-        Usuario: cpf_cnpj
-    };
-
     try {
-        const response = await apiAuth.post(authUrl, body);
+        const response = await apiAuth.post('/api/Login/v5/Authentication', {
+            AppId: process.env.API_APP_ID,
+            AppPass: process.env.API_APP_PASS,
+            Usuario: cpf_cnpj
+        });
         const token = response.data.token || response.data.access_token;
-        if (token) return token;
-        if (typeof response.data === 'string' && response.data.length > 50) return response.data;
-        throw new Error('No se pudo extraer el token de la respuesta de autenticación.');
+        if (!token && typeof response.data === 'string') return response.data;
+        if (!token) throw new Error('Token no encontrado en respuesta de auth.');
+        return token;
     } catch (error) {
-        console.error('Error DETALLADO al obtener token de autenticación:', error.message);
-        if (error.response) {
-            console.error('Status:', error.response.status);
-            console.error('Data:', error.response.data);
-        }
-        throw error; // Re-lanzar para manejo global
+        console.error('Error Auth Detallado:', error.message);
+        if(error.response) console.error('Auth Status:', error.response.status);
+        throw error;
     }
 }
 
-// --- 3. Helper de Reconstrucción de Contexto ---
-// Este helper "reconstruye" el estado técnico (IDs, Contratos) desde cero
-// usando solo el teléfono, para que el LLM no tenga que recordar nada.
+// --- 3. RECONSTRUCTOR DE CONTEXTO (EL CEREBRO) ---
+// Ejecuta toda la cadena: Auth -> Credores -> Divida
+// Recupera los datos frescos necesarios para cualquier operación subsiguiente.
 async function obtenerContextoDeuda(function_call_username) {
-    let rawPhone = function_call_username;
-    if (function_call_username.includes("--")) {
-        rawPhone = function_call_username.split("--").pop();
-    }
+    let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
-    // A. Identificar Usuario
+    // A. LOGIN
     const userData = await getUserDataFromDB(rawPhone);
     if (!userData || !userData.cpf_cnpj) throw new Error("Usuario no encontrado en BD.");
     const cpf_cnpj = userData.cpf_cnpj;
-
-    // B. Obtener Token Fresco
+    
+    // Paso 1: Autenticación
     const token = await getAuthToken(cpf_cnpj);
 
-    // C. Buscar Acreedores Reales
+    // Paso 2: Busca Credores (Obtener Crm y Carteira)
     const resCredores = await apiNegocie.get('/api/v5/busca-credores', {
         headers: { 'Authorization': `Bearer ${token}` }
     });
     
     if (!resCredores.data.credores || resCredores.data.credores.length === 0) {
-        throw new Error("No se encontraron acreedores activos para este usuario.");
+        throw new Error("No se encontraron acreedores activos.");
     }
 
-    // NOTA: Seleccionamos el PRIMER acreedor automáticamente.
+    // Tomamos el primer acreedor disponible
     const credor = resCredores.data.credores[0];
     
-    // --- DEBUG: Inspeccionar estructura para evitar error de "Carteira undefined" ---
-    console.log("DEBUG - Estructura del Acreedor:", JSON.stringify(credor, null, 2));
-    
-    // Intentamos obtener el ID de la cartera. Probamos 'carteiraId' (correcto) y 'carteirald' (posible typo OCR)
+    // Extracción segura del ID de cartera
     const carteiraInfo = credor.carteiraCrms && credor.carteiraCrms[0];
     const carteiraId = carteiraInfo ? (carteiraInfo.carteiraId || carteiraInfo.carteirald || carteiraInfo.id) : null;
 
-    if (!carteiraId) {
-        console.error("ERROR CRÍTICO: No se pudo encontrar el ID de la Cartera en la respuesta del acreedor.");
-        throw new Error("Error técnico: ID de cartera no disponible.");
-    }
+    if (!carteiraId) throw new Error("ID de cartera no disponible en Busca Credores.");
 
-    // D. Buscar Detalle de Deudas (para obtener contratos)
+    // Paso 3: Busca Divida (Obtener Contratos y Fase)
     const bodyDivida = { financeira: credor.financeira, crms: credor.crms };
     const resDividas = await apiNegocie.post('/api/v5/busca-divida', bodyDivida, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -173,157 +161,164 @@ async function obtenerContextoDeuda(function_call_username) {
 
     const dividas = resDividas.data;
     if (!dividas || dividas.length === 0) {
-        throw new Error("El acreedor no tiene deudas detalladas disponibles.");
+        throw new Error("El acreedor no tiene deudas detalladas en Busca Divida.");
     }
 
-    // Extraer lista de contratos de la primera deuda
-    const contratos = dividas[0].contratos.map(c => c.documento || c.numero);
+    const deudaPrincipal = dividas[0];
     
+    // Extracción de Datos Críticos:
+    
+    // 1. Contratos IDs (Int32) -> CRÍTICO para 'Busca Opcao Pagamento' (evita el error Int32)
+    const contratosIds = deudaPrincipal.contratos
+        .map(c => c.id)
+        .filter(id => id !== undefined && id !== null);
+
+    // 2. Contratos Documentos (String) -> CRÍTICO para 'Emitir Boleto'
+    const contratosDocs = deudaPrincipal.contratos.map(c => c.documento || c.numero);
+    
+    // 3. Fase -> Dato importante para emisión
+    const fase = deudaPrincipal.fase || "";
+
+    console.log(`DEBUG CONTEXTO RECUPERADO - Fase: ${fase}, Carteira: ${carteiraId}, Contratos(Num): ${contratosIds.length}`);
+
     return {
         token,
         cpf_cnpj,
+        financeira: credor.financeira, // Nombre para reportes
         Crm: credor.crms[0], 
-        Carteira: carteiraId, // Usamos el ID corregido
-        Contratos: contratos,
-        ContratoPrincipal: contratos[0]
+        Carteira: carteiraId,
+        fase: fase,
+        ContratosSimulacion: contratosIds, // Array de Enteros
+        ContratoEmision: contratosDocs[0]  // String
     };
 }
 
 
-// --- Rutas de la API (Endpoints Stateless) ---
+// --- Rutas de la API ---
 
 app.get('/', (req, res) => {
-    responder(res, 200, "API Stateless de Negociación", { status: 'OK', mode: 'REAL_API' });
+    responder(res, 200, "API Stateless de Negociación", { status: 'OK', mode: 'REAL_API_TEST_LIST' });
 });
 
-// --- Endpoint 1: Identificación y Consulta ---
-// Valida identidad y devuelve deuda real.
+// --- PASO 1: Identificación ---
+// Muestra al usuario qué deudas tiene (con formato Markdown bonito)
 app.post('/api/negociacao/buscar-credores', async (req, res) => {
     const { function_call_username, cpf_cnpj } = req.body;
-    if (!function_call_username || !cpf_cnpj) return responder(res, 400, "Error", { mensaje: "Faltan datos requeridos." });
+    if (!function_call_username || !cpf_cnpj) return responder(res, 400, "Error", { mensaje: "Faltan datos." });
 
     let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
     try {
-        // 1. Validación vs DB Simulada
         const userData = await getUserDataFromDB(rawPhone);
-        if (!userData) return responder(res, 404, "Error", { mensaje: "Usuario no encontrado en registros." });
-
-        // Normalizar para comparar (solo números)
-        const cpfCleanInput = String(cpf_cnpj).replace(/\D/g,'');
-        const cpfCleanDB = String(userData.cpf_cnpj).replace(/\D/g,'');
-
-        if (cpfCleanDB !== cpfCleanInput) {
-            return responder(res, 403, "Error de Identidad", { mensaje: "El documento proporcionado no coincide con el registrado para este teléfono." });
+        if (!userData) return responder(res, 404, "Error", { mensaje: "Usuario no encontrado." });
+        
+        if (String(userData.cpf_cnpj).replace(/\D/g,'') !== String(cpf_cnpj).replace(/\D/g,'')) {
+            return responder(res, 403, "Error", { mensaje: "Identidad no verificada." });
         }
 
-        // 2. Consulta Real a API
-        const token = await getAuthToken(userData.cpf_cnpj);
-        const resCredores = await apiNegocie.get('/api/v5/busca-credores', { headers: { 'Authorization': `Bearer ${token}` }});
+        // Reconstruimos contexto para obtener credenciales y datos base
+        const ctx = await obtenerContextoDeuda(function_call_username);
 
-        if (!resCredores.data.credores || resCredores.data.credores.length === 0) {
-            return responder(res, 404, "Sin Deudas", { mensaje: "Validación correcta. No se encontraron deudas pendientes." });
+        // Llamada explícita a busca-divida para obtener el detalle visual para el usuario
+        const resDividas = await apiNegocie.post('/api/v5/busca-divida', 
+            { financeira: ctx.financeira || "Itaú", crms: [ctx.Crm] }, 
+             { headers: { 'Authorization': `Bearer ${ctx.token}` }}
+        );
+        
+        // --- VISUALIZACIÓN DE DEUDAS ---
+        let md = `**Identidad verificada.** Se han encontrado las siguientes deudas con **${ctx.financeira || 'la entidad'}**:\n\n`;
+        
+        const deudas = resDividas.data;
+        if (deudas && deudas.length > 0) {
+            deudas.forEach((deuda, i) => {
+                md += `### Deuda ${i + 1}: Total R$ ${deuda.valor}\n`;
+                if (deuda.contratos && deuda.contratos.length > 0) {
+                    deuda.contratos.forEach(contrato => {
+                        md += `- **Producto**: ${contrato.produto}\n`;
+                        md += `  - **Contrato**: ${contrato.documento || contrato.numero}\n`;
+                        md += `  - **Valor Original**: R$ ${contrato.valor}\n`;
+                        md += `  - **Días de Atraso**: ${contrato.diasAtraso}\n`;
+                    });
+                }
+                md += `\n`;
+            });
+        } else {
+             md += "No se encontraron detalles específicos de contratos.\n";
         }
 
-        // 3. Enriquecimiento de Datos (Iterar acreedores para obtener montos reales)
-        const credoresDetalle = await Promise.all(resCredores.data.credores.map(async (c) => {
-            try {
-                const resD = await apiNegocie.post('/api/v5/busca-divida', 
-                    { financeira: c.financeira, crms: c.crms }, 
-                    { headers: { 'Authorization': `Bearer ${token}` }}
-                );
-                return { ...c, dividas: resD.data };
-            } catch (e) {
-                return { ...c, dividas: [], error: "No se pudo cargar detalle" };
-            }
-        }));
-
-        // 4. Generar Resumen Markdown
-        let md = `Confirmado. Hemos encontrado las siguientes deudas:\n\n`;
-        credoresDetalle.forEach(c => {
-            if(c.dividas && c.dividas.length > 0) {
-                c.dividas.forEach(d => {
-                    md += `- **${c.financeira}**: R$ ${d.valor} (Atraso: ${d.contratos[0]?.diasAtraso || '?'} días)\n`;
-                });
-            } else {
-                md += `- **${c.financeira}**: Deuda encontrada pero sin detalle de monto disponible.\n`;
-            }
-        });
-
-        return responder(res, 200, "Deudas Encontradas", { credores: credoresDetalle, mensaje: md });
+        if(ctx.fase) md += `> Fase de negociación: ${ctx.fase}\n`;
+        
+        return responder(res, 200, "Deudas Encontradas", { mensaje: md, detalle: resDividas.data });
 
     } catch (error) {
         return handleApiError(res, error, "Error al buscar deudas");
     }
 });
 
-// --- Endpoint 2: Simulación (Stateless) ---
-// El usuario pide condiciones, el server reconstruye y consulta.
+// --- PASO 2: Simulación (Stateless & Robust) ---
+// Reconstruye todo el contexto y luego llama a la API de simulación
 app.post('/api/negociacao/buscar-opcoes-pagamento', async (req, res) => {
     const { function_call_username, DataVencimento, QuantidadeParcela, ValorEntrada } = req.body;
-    
-    if (!function_call_username) return responder(res, 400, "Error", { mensaje: "Falta function_call_username" });
+    if (!function_call_username) return responder(res, 400, "Error", { mensaje: "Falta usuario." });
 
     try {
-        // 1. Reconstruir Contexto (Auth -> IDs)
+        // 1. Recuperar Credenciales y Datos de API (Auth -> Credores -> Divida)
         const ctx = await obtenerContextoDeuda(function_call_username);
 
-        // 2. Llamada Real a Simulación
+        // 2. Construir Body usando los datos FRESC y REALES
         const bodySimulacion = {
             Crm: ctx.Crm,
             Carteira: ctx.Carteira,
-            Contratos: ctx.Contratos,
+            Contratos: ctx.ContratoEmision, // IDs numéricos (Int32)
             DataVencimento: DataVencimento || null,
             ValorEntrada: ValorEntrada || 0,
             QuantidadeParcela: QuantidadeParcela || 0,
             ValorParcela: 0
         };
 
-        // DEBUG: Ver qué estamos enviando antes de que falle
-        console.log("Enviando body a simulacion:", JSON.stringify(bodySimulacion, null, 2));
+        console.log("Simulando con:", JSON.stringify(bodySimulacion));
 
+        // 3. Llamada Real a Busca Opcao Pagamento
         const response = await apiNegocie.post('/api/v5/busca-opcao-pagamento', bodySimulacion, {
             headers: { 'Authorization': `Bearer ${ctx.token}` }
         });
 
-        // 3. Formatear Opciones para el Usuario
-        let md = "Aquí están las opciones de pago disponibles:\n\n";
+        // 4. Formatear respuesta
+        let md = "Opciones de pago disponibles:\n\n";
         if (response.data.opcoesPagamento) {
             response.data.opcoesPagamento.forEach((op, idx) => {
-                md += `**Opción ${idx + 1}**: ${op.texto}\n`;
-                md += `- Total a pagar: R$ ${op.valorTotalComCustas || op.valor}\n`;
-                if (op.desconto > 0) md += `- ¡Ahorras R$ ${op.desconto}!\n`;
+                md += `**${idx + 1}. ${op.texto}**\n`;
+                md += `- Total: R$ ${op.valorTotalComCustas || op.valor}\n`;
+                if (op.desconto > 0) md += `- Descuento: R$ ${op.desconto}\n`;
                 md += `\n`;
             });
         } else {
-            md = "No se encontraron opciones de pago con esos parámetros.";
+            md = "No se encontraron opciones para esos parámetros.";
         }
 
         return responder(res, 200, "Opciones Calculadas", { ...response.data, mensaje: md });
 
     } catch (error) {
-        return handleApiError(res, error, "Error al simular opciones");
+        return handleApiError(res, error, "Error al simular");
     }
 });
 
-// --- Endpoint 3: Emisión de Boleto (Stateless Inteligente) ---
-// El usuario elige parcelas, el server reconstruye, simula, valida requisitos y emite.
+// --- PASO 3: Emisión (Stateless & Robust) ---
 app.post('/api/negociacao/emitir-boleto', async (req, res) => {
     const { function_call_username, Parcelas, DataVencimento } = req.body;
-
-    if (!function_call_username || !Parcelas) return responder(res, 400, "Error", { mensaje: "Se requiere usuario y número de parcelas." });
+    if (!function_call_username || !Parcelas) return responder(res, 400, "Error", { mensaje: "Faltan datos." });
 
     try {
-        // 1. Reconstruir Contexto
+        // 1. Recuperar Todo el Contexto de Nuevo
         const ctx = await obtenerContextoDeuda(function_call_username);
-
-        // 2. Re-Simular para obtener Identificador válido
+        
+        // 2. Re-Simular para obtener el Identificador válido para ESTA sesión
         const bodySimulacion = {
             Crm: ctx.Crm,
             Carteira: ctx.Carteira,
-            Contratos: ctx.Contratos,
+            Contratos: ctx.ContratosSimulacion,
             DataVencimento: DataVencimento || null, 
-            QuantidadeParcela: Parcelas, // Filtramos por lo que quiere el usuario
+            QuantidadeParcela: Parcelas,
             ValorEntrada: 0,
             ValorParcela: 0
         };
@@ -332,47 +327,39 @@ app.post('/api/negociacao/emitir-boleto', async (req, res) => {
             headers: { 'Authorization': `Bearer ${ctx.token}` }
         });
 
-        // 3. Encontrar la opción deseada en la simulación
-        const opcionElegida = resSimulacion.data.opcoesPagamento.find(op => op.qtdParcelas == Parcelas);
-
-        if (!opcionElegida) {
-            return responder(res, 400, "Opción No Disponible", { mensaje: `No pude generar una opción válida con ${Parcelas} cuotas para esa fecha.` });
-        }
+        const opcionElegida = resSimulacion.data.opcoesPagamento?.find(op => op.qtdParcelas == Parcelas);
+        if (!opcionElegida) return responder(res, 400, "Error", { mensaje: "Opción no válida." });
 
         let identificadorFinal = opcionElegida.codigo;
         const valorFinal = opcionElegida.valor;
 
-        // 4. Manejo Automático de "Resumo Boleto" (Si la API lo requiere)
-        // La documentación dice que si 'chamarResumoBoleto' es true, hay que llamar a ese endpoint intermedio.
+        // 3. Paso Intermedio: Resumo Boleto (Si la API lo exige)
         if (resSimulacion.data.chamarResumoBoleto) {
-            console.log("La API requiere paso intermedio Resumo Boleto. Ejecutando...");
-            
+            console.log("Paso Intermedio: Resumo Boleto");
             const bodyResumo = {
                 Crm: ctx.Crm,
                 CodigoCarteira: ctx.Carteira,
                 CNPJ_CPF: ctx.cpf_cnpj,
-                Contrato: ctx.ContratoPrincipal,
+                Contrato: ctx.ContratoEmision, // String Documento
                 CodigoOpcao: opcionElegida.codigo
             };
-
             const resResumo = await apiNegocie.post('/api/v5/resumo-boleto', bodyResumo, {
                 headers: { 'Authorization': `Bearer ${ctx.token}` }
             });
-
             if (resResumo.data.sucesso && resResumo.data.identificador) {
-                identificadorFinal = resResumo.data.identificador; // Actualizamos con el ID definitivo
+                identificadorFinal = resResumo.data.identificador;
             } else {
-                throw new Error("Falló el paso intermedio de resumen de boleto.");
+                throw new Error("Falló Resumo Boleto.");
             }
         }
 
-        // 5. Emisión Real del Boleto
+        // 4. Emitir Boleto Final
         const bodyEmision = {
             Crm: ctx.Crm,
             Carteira: ctx.Carteira,
             CNPJ_CPF: ctx.cpf_cnpj,
-            fase: "",
-            Contrato: ctx.ContratoPrincipal,
+            fase: ctx.fase,
+            Contrato: ctx.ContratoEmision, // String Documento
             Valor: valorFinal,
             Parcelas: Parcelas,
             DataVencimento: opcionElegida.dataVencimento || DataVencimento,
@@ -384,12 +371,10 @@ app.post('/api/negociacao/emitir-boleto', async (req, res) => {
             headers: { 'Authorization': `Bearer ${ctx.token}` }
         });
 
-        // Construir mensaje de éxito
-        const md = `¡Listo! Boleto generado exitosamente.\n\n` +
-                   `**Valor**: R$ ${resEmision.data.valorTotal || valorFinal}\n` +
-                   `**Vencimiento**: ${resEmision.data.vcto}\n` +
-                   `**Código de Barras**: \`${resEmision.data.linhaDigitavel}\`\n\n` +
-                   `Puedes copiar el código de barras para pagar en tu banco.`;
+        const md = `¡Boleto generado!\n\n` +
+                   `Valor: R$ ${resEmision.data.valorTotal || valorFinal}\n` +
+                   `Vence: ${resEmision.data.vcto}\n` +
+                   `Código: \`${resEmision.data.linhaDigitavel}\``;
 
         return responder(res, 201, "Boleto Emitido", { ...resEmision.data, mensaje: md });
 
@@ -398,8 +383,5 @@ app.post('/api/negociacao/emitir-boleto', async (req, res) => {
     }
 });
 
-// Exportar para Vercel
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 module.exports = app;
-app.listen(PORT, () => {
-    console.log(`Servidor de Herramientas de Negociación (v2) corriendo en el puerto ${PORT}`);
-});
