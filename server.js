@@ -11,45 +11,7 @@ app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const https = require('https')
-/**
- * Creates a custom HTTPS Agent to log detailed connection timings.
- * @returns {https.Agent} A custom HTTPS Agent instance.
- */
-function createTimingAgent() {
-    // This Agent is used to manage and reuse HTTP/HTTPS connections.
-    const timingAgent = new https.Agent({ keepAlive: true });
 
-    // This event fires when a new socket is being assigned to the request.
-    timingAgent.on('createConnection', (options, callback) => {
-        // Record the time before the connection starts
-        const connectStart = Date.now();
-        
-        // This is the default Node.js way to create the secure connection
-        const socket = https.globalAgent.createConnection(options, callback);
-
-        // This event fires when the connection is fully established (TCP + TLS Handshake complete)
-        socket.on('secureConnect', () => {
-            const connectEnd = Date.now();
-            const connectionTime = connectEnd - connectStart;
-            
-            console.log(`⏱️ Connection Time (TCP + TLS Handshake): **${connectionTime}ms**`);
-        });
-
-        // Optional: Log when the socket is assigned
-        socket.on('lookup', () => {
-            const dnsResolved = Date.now();
-            console.log(`    DNS Resolution Time: ${dnsResolved - connectStart}ms`);
-        });
-
-        return socket;
-    });
-
-    return timingAgent;
-}
-
-
-
-const timingAgent = createTimingAgent();
 
 // --- Configuración de Instancias de Axios ---
 const apiAuth = axios.create({
@@ -60,10 +22,47 @@ const apiAuth = axios.create({
 const apiNegocie = axios.create({
     baseURL: 'https://api-negocie.bellinati.com.br',
     timeout: 100000,
-    httpsAgent:timingAgent,
+    // headers: {
+    //     'Content-Type': 'application/json', 
+    //     // Identificarse como un cliente 'normal' de la web, no solo Node.js
+    //     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    //     // Pedir la codificación que la mayoría de los servidores esperan
+    //     'Accept-Encoding': 'gzip, deflate, br', 
+    //     // Limpiar cualquier otra cabecera de aceptación
+    //     'Accept': '*/*',
+    // }
+    //httpsAgent:timingAgent,
     
 });
+apiNegocie.interceptors.request.use(config => {
+    // Adjuntar la hora de inicio a un campo temporal 'metadata'
+    config.metadata = { startTime: Date.now() }; 
+    console.log('--- Solicitud enviada (Hora de inicio registrada) ---');
+    return config;
+}, error => {
+    // Manejo de errores antes del envío
+    console.error('❌ Error al preparar solicitud:', error.message);
+    return Promise.reject(error);
+});
 
+apiNegocie.interceptors.response.use(response => {
+    const totalDuration = Date.now() - response.config.metadata.startTime;
+    console.log('--- Respuesta recibida ---');
+    
+    // Este tiempo incluye: DNS + Conexión/TLS + Tiempo de Procesamiento del Servidor + Descarga del Cuerpo.
+    console.log(`✅ Tiempo Total de Solicitud (Envío -> Recepción): **${totalDuration}ms**`);
+    
+    return response;
+}, error => {
+    // Manejo de errores de respuesta (códigos 4xx, 5xx o timeout de red)
+    if (error.config && error.config.metadata) {
+        const totalDuration = Date.now() - error.config.metadata.startTime;
+        console.error(`❌ Tiempo de Error Total: **${totalDuration}ms**`);
+    }
+    console.error('❌ Error de Respuesta:', error.message);
+    
+    return Promise.reject(error);
+});
 // --- Middlewares ---
 app.use(helmet());
 app.use(cors());
@@ -132,7 +131,7 @@ async function getUserDataFromDB(rawPhone) {
         "04065282330": { cpf_cnpj: "04065282330", nombre: "Usuario Test 040" },
         "09241820918": { cpf_cnpj: "09241820918", nombre: "Usuario Test 092" },
         "63618955308": { cpf_cnpj: "63618955308", nombre: "Usuario Test 636" },
-        "default": { cpf_cnpj: "02637364238", nombre: "Usuario Default" }
+        "555510609610": { cpf_cnpj: "02637364238", nombre: "Usuario Default" }
     };
     
     const userData = simulacionDB[rawPhone] || simulacionDB["default"];
