@@ -4,7 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const axios = require('axios');
-
+const dns = require('dns')
 const app = express();
 app.use(express.json()); 
 app.use(express.urlencoded({ extended: true }));
@@ -12,55 +12,95 @@ app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const https = require('https')
 
-
+dns.setDefaultResultOrder('ipv4first');
+dns.setServers(['8.8.8.8', '8.8.4.4']);
 // --- Configuración de Instancias de Axios ---
 const apiAuth = axios.create({
     baseURL: 'https://bpdigital-api.bellinatiperez.com.br',
-    timeout: 100000
+    timeout: 30000,  // Changed from 100000
+    family: 4,  // ADD THIS LINE - Forces IPv4
+    httpAgent: new https.Agent({  // ADD THIS BLOCK
+        keepAlive: true,
+        keepAliveMsecs: 30000,
+        maxSockets: 50,
+        maxFreeSockets: 10
+    }),
+    httpsAgent: new https.Agent({  // ADD THIS BLOCK
+        keepAlive: true,
+        keepAliveMsecs: 30000,
+        maxSockets: 50,
+        maxFreeSockets: 10,
+        rejectUnauthorized: true
+    })
 });
+
+
+//const timingAgent = createTimingAgent(false)
 
 const apiNegocie = axios.create({
     baseURL: 'https://api-negocie.bellinati.com.br',
-    timeout: 100000,
-    // headers: {
-    //     'Content-Type': 'application/json', 
-    //     // Identificarse como un cliente 'normal' de la web, no solo Node.js
-    //     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    //     // Pedir la codificación que la mayoría de los servidores esperan
-    //     'Accept-Encoding': 'gzip, deflate, br', 
-    //     // Limpiar cualquier otra cabecera de aceptación
-    //     'Accept': '*/*',
-    // }
-    //httpsAgent:timingAgent,
-    
+    timeout: 30000,  // Changed from 100000
+    family: 4,  // ADD THIS LINE - Forces IPv4
+    httpAgent: new https.Agent({  // ADD THIS BLOCK
+        keepAlive: true,
+        keepAliveMsecs: 30000,
+        maxSockets: 50,
+        maxFreeSockets: 10
+    }),
+    httpsAgent: new https.Agent({  // ADD THIS BLOCK
+        keepAlive: true,
+        keepAliveMsecs: 30000,
+        maxSockets: 50,
+        maxFreeSockets: 10,
+        rejectUnauthorized: true
+    })
+    // Remove or comment out the commented headers and httpsAgent if they exist
 });
+const ESTIMATED_NETWORK_TIME = 800; 
+
+// --- Interceptor de Solicitud ---
 apiNegocie.interceptors.request.use(config => {
-    // Adjuntar la hora de inicio a un campo temporal 'metadata'
-    config.metadata = { startTime: Date.now() }; 
-    console.log('--- Solicitud enviada (Hora de inicio registrada) ---');
+    // ⚠️ Aseguramos que config.metadata exista antes de usarlo
+    if (!config.metadata) {
+        config.metadata = {};
+    }
+    // Asignamos la marca de tiempo de inicio
+    config.metadata.startRequest = Date.now(); 
     return config;
-}, error => {
-    // Manejo de errores antes del envío
-    console.error('❌ Error al preparar solicitud:', error.message);
-    return Promise.reject(error);
 });
 
+// --- Interceptor de Respuesta ---
 apiNegocie.interceptors.response.use(response => {
-    const totalDuration = Date.now() - response.config.metadata.startTime;
-    console.log('--- Respuesta recibida ---');
+    const endResponse = Date.now();
     
-    // Este tiempo incluye: DNS + Conexión/TLS + Tiempo de Procesamiento del Servidor + Descarga del Cuerpo.
-    console.log(`✅ Tiempo Total de Solicitud (Envío -> Recepción): **${totalDuration}ms**`);
+    // ⚠️ Usamos un valor de respaldo (0) si la marca de tiempo no existe
+    const startRequest = response.config.metadata?.startRequest || endResponse;
+
+    const totalDuration = endResponse - startRequest;
+    
+    // Asumimos que la red es rápida (800ms) y el resto es del servidor
+    const serverWaitTime = totalDuration - ESTIMATED_NETWORK_TIME; 
+
+    // --- LOG DE RESULTADOS FINAL ---
+    console.log('----------------------------------------------------');
+    console.log('✅ TIMINGS DE SOLICITUD COMPLETADOS (Corregido):');
+    
+    console.log(`\n  Fase 1: Red y Conexión`);
+    console.log(`    Tiempo Estimado de Conexión (cURL): **${ESTIMATED_NETWORK_TIME}ms**`);
+    
+    console.log(`\n  Fase 2: Espera del Servidor`);
+    // Aseguramos que no haya valores negativos
+    const finalWaitTime = Math.max(0, serverWaitTime); 
+    console.log(`    Tiempo de Procesamiento del Servidor: **${finalWaitTime.toFixed(0)}ms**`);
+
+    console.log(`\n  Fase 3: Total`);
+    console.log(`    Tiempo Total (Envío -> Recepción): **${totalDuration}ms**`);
+    console.log('----------------------------------------------------');
     
     return response;
 }, error => {
-    // Manejo de errores de respuesta (códigos 4xx, 5xx o timeout de red)
-    if (error.config && error.config.metadata) {
-        const totalDuration = Date.now() - error.config.metadata.startTime;
-        console.error(`❌ Tiempo de Error Total: **${totalDuration}ms**`);
-    }
-    console.error('❌ Error de Respuesta:', error.message);
-    
+    // ... manejar errores ...
+    console.error('❌ ERROR EN LA SOLICITUD:', error.message);
     return Promise.reject(error);
 });
 // --- Middlewares ---
@@ -329,9 +369,9 @@ app.post('/api/negociacao/buscar-opcoes-pagamento', async (req, res) => {
 
         console.log("Simulando con:", JSON.stringify(bodySimulacion));
         console.time("Tiempo de ejecución de la función");
-        // 3. Llamada Real a Busca Opcao Pagamento
         const response = await apiNegocie.post('/api/v5/busca-opcao-pagamento', bodySimulacion, {
-            headers: { 'Authorization': `Bearer ${ctx.token}` }, family:4
+            headers: { 'Authorization': `Bearer ${ctx.token}` }
+            // family:4 removed - it's configured in the axios instance
         });
         console.timeEnd("Tiempo de ejecución de la función");
 
@@ -420,14 +460,14 @@ app.post('/api/negociacao/emitir-boleto', async (req, res) => {
             TipoContrato: null
         };
 
-        const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', bodyEmision, {
-            headers: { 'Authorization': `Bearer ${ctx.token}` }
-        });
+        // const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', bodyEmision, {
+        //     headers: { 'Authorization': `Bearer ${ctx.token}` }
+        // });
 
-        const md = `¡Boleto generado!\n\n` +
-                   `Valor: R$ ${resEmision.data.valorTotal || valorFinal}\n` +
-                   `Vence: ${resEmision.data.vcto}\n` +
-                   `Código: \`${resEmision.data.linhaDigitavel}\``;
+        // const md = `¡Boleto generado!\n\n` +
+        //            `Valor: R$ ${resEmision.data.valorTotal || valorFinal}\n` +
+        //            `Vence: ${resEmision.data.vcto}\n` +
+        //            `Código: \`${resEmision.data.linhaDigitavel}\``;
 
         return responder(res, 201, "Boleto Emitido", { ...resEmision.data, mensaje: md });
 
