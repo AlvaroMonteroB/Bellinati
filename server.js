@@ -14,12 +14,12 @@ const PORT = process.env.PORT || 3000;
 // --- Configuración de Instancias de Axios ---
 const apiAuth = axios.create({
     baseURL: 'https://bpdigital-api.bellinatiperez.com.br',
-    timeout: 25000
+    timeout: 100000
 });
 
 const apiNegocie = axios.create({
     baseURL: 'https://api-negocie.bellinati.com.br',
-    timeout: 15000
+    timeout: 100000
 });
 
 // --- Middlewares ---
@@ -176,7 +176,7 @@ async function obtenerContextoDeuda(function_call_username) {
         if (deuda.contratos && Array.isArray(deuda.contratos)) {
             deuda.contratos.forEach(c => {
                 // Usamos el documento/numero para ambos casos (Simulación y Emisión) según documentación
-                const doc = c.documento || c.numero;
+                const doc = c.numero;
                 if (doc) {
                     contratosDocs.push(String(doc)); // Aseguramos que sea String
                 }
@@ -270,8 +270,9 @@ app.post('/api/negociacao/buscar-opcoes-pagamento', async (req, res) => {
 
     try {
         // 1. Recuperar Credenciales y Datos de API (Auth -> Credores -> Divida)
+        console.log("Obteniendo contexto")
         const ctx = await obtenerContextoDeuda(function_call_username);
-
+        console.log("contexto obtenido");
         // 2. Construir Body usando los datos FRESCOS y REALES
         // NOTA: Contratos ahora es Array de Strings (Documentos)
         const bodySimulacion = {
@@ -283,6 +284,7 @@ app.post('/api/negociacao/buscar-opcoes-pagamento', async (req, res) => {
             QuantidadeParcela: QuantidadeParcela || 0,
             ValorParcela: 0
         };
+
 
         console.log("Simulando con:", JSON.stringify(bodySimulacion));
 
@@ -337,7 +339,7 @@ app.post('/api/negociacao/emitir-boleto', async (req, res) => {
 
         const opcionElegida = resSimulacion.data.opcoesPagamento?.find(op => op.qtdParcelas == Parcelas);
         if (!opcionElegida) return responder(res, 400, "Error", { mensaje: "Opción no válida." });
-
+        
         let identificadorFinal = opcionElegida.codigo;
         const valorFinal = opcionElegida.valor;
 
@@ -351,6 +353,7 @@ app.post('/api/negociacao/emitir-boleto', async (req, res) => {
                 Contrato: ctx.ContratoEmision, // String Documento
                 CodigoOpcao: opcionElegida.codigo
             };
+            console.log("Resumen de boleto");
             const resResumo = await apiNegocie.post('/api/v5/resumo-boleto', bodyResumo, {
                 headers: { 'Authorization': `Bearer ${ctx.token}` }
             });
