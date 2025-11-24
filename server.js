@@ -10,6 +10,46 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
+const https = require('https')
+/**
+ * Creates a custom HTTPS Agent to log detailed connection timings.
+ * @returns {https.Agent} A custom HTTPS Agent instance.
+ */
+function createTimingAgent() {
+    // This Agent is used to manage and reuse HTTP/HTTPS connections.
+    const timingAgent = new https.Agent({ keepAlive: true });
+
+    // This event fires when a new socket is being assigned to the request.
+    timingAgent.on('createConnection', (options, callback) => {
+        // Record the time before the connection starts
+        const connectStart = Date.now();
+        
+        // This is the default Node.js way to create the secure connection
+        const socket = https.globalAgent.createConnection(options, callback);
+
+        // This event fires when the connection is fully established (TCP + TLS Handshake complete)
+        socket.on('secureConnect', () => {
+            const connectEnd = Date.now();
+            const connectionTime = connectEnd - connectStart;
+            
+            console.log(`⏱️ Connection Time (TCP + TLS Handshake): **${connectionTime}ms**`);
+        });
+
+        // Optional: Log when the socket is assigned
+        socket.on('lookup', () => {
+            const dnsResolved = Date.now();
+            console.log(`    DNS Resolution Time: ${dnsResolved - connectStart}ms`);
+        });
+
+        return socket;
+    });
+
+    return timingAgent;
+}
+
+
+
+const timingAgent = createTimingAgent();
 
 // --- Configuración de Instancias de Axios ---
 const apiAuth = axios.create({
@@ -19,7 +59,9 @@ const apiAuth = axios.create({
 
 const apiNegocie = axios.create({
     baseURL: 'https://api-negocie.bellinati.com.br',
-    timeout: 100000
+    timeout: 100000,
+    httpsAgent:timingAgent,
+    
 });
 
 // --- Middlewares ---
@@ -287,11 +329,12 @@ app.post('/api/negociacao/buscar-opcoes-pagamento', async (req, res) => {
 
 
         console.log("Simulando con:", JSON.stringify(bodySimulacion));
-
+        console.time("Tiempo de ejecución de la función");
         // 3. Llamada Real a Busca Opcao Pagamento
         const response = await apiNegocie.post('/api/v5/busca-opcao-pagamento', bodySimulacion, {
-            headers: { 'Authorization': `Bearer ${ctx.token}` }
+            headers: { 'Authorization': `Bearer ${ctx.token}` }, family:4
         });
+        console.timeEnd("Tiempo de ejecución de la función");
 
         // 4. Formatear respuesta
         let md = "Opciones de pago disponibles:\n\n";
