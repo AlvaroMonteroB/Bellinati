@@ -195,7 +195,8 @@ const responder = (res, statusCode, title, rawData) => {
     res.status(statusCode).json({
         raw: { status: 'exito', ...rawData },
         markdown: `**${title}**\n\n${message}`,
-        type: "markdown"
+        type: "markdown",
+        desc:`**${title}**\n\n${message}`
     });
 };
 
