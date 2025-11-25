@@ -202,33 +202,47 @@ const responder = (res, statusCode, title, rawData) => {
 
 app.post('/api/negociacao/buscar-credores', async (req, res) => {
     const { function_call_username } = req.body;
+    // Limpieza del teléfono
     let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
     try {
-        // LEER DE SQLITE (0 latencia de red externa)
+        // 1. LEER DE SQLITE (Velocidad instantánea)
         const cachedUser = await getFromCache(rawPhone);
         
         if (!cachedUser) {
-            return res.status(404).json({ error: "Usuario no sincronizado o no encontrado. Ejecute sync." });
+            // Si no está en BD, avisamos para que corras el sync
+            return res.status(404).json({ error: "Usuario no sincronizado. Ejecute /api/admin/sync-database primero." });
         }
 
         const dividasData = JSON.parse(cachedUser.dividas_json);
         
-        // Generar Markdown desde la cache
-        let md = `**Hola.** Hemos encontrado tus deudas (Información al: ${cachedUser.last_updated}):\n\n`;
-        dividasData.forEach((deuda, i) => {
-            md += `### Deuda ${i + 1}: Total R$ ${deuda.valor}\n`;
-            if (deuda.contratos) {
-                deuda.contratos.forEach(contrato => {
-                    md += `- Producto: ${contrato.produto} (Doc: ${contrato.numero})\n`;
-                });
-            }
-        });
+        // 2. GENERAR MARKDOWN (Aquí agregamos los días de atraso)
+        let md = `**Hola.** Hemos encontrado tus deudas (Actualizado al: ${new Date(cachedUser.last_updated).toLocaleString()}):\n\n`;
+        
+        if (dividasData && dividasData.length > 0) {
+            dividasData.forEach((deuda, i) => {
+                md += `### 💰 Deuda ${i + 1}: Total R$ ${deuda.valor}\n`;
+                if (deuda.contratos && deuda.contratos.length > 0) {
+                    deuda.contratos.forEach(contrato => {
+                        md += `- **Producto:** ${contrato.produto}\n`;
+                        md += `  - 📄 Contrato: ${contrato.numero || contrato.documento}\n`;
+                        md += `  - 📅 **Días de Atraso:** ${contrato.diasAtraso}\n`; // <--- AQUI AGREGAMOS EL DATO
+                        md += `  - 💲 Valor Original: R$ ${contrato.valor}\n`;
+                    });
+                } else {
+                    md += "  - Sin detalles de contratos.\n";
+                }
+                md += `\n`;
+            });
+        } else {
+            md += "No se encontraron deudas activas en el registro.";
+        }
 
-        responder(res, 200, "Deudas (Caché)", { mensaje: md, detalle: dividasData });
+        // 3. RESPONDER
+        responder(res, 200, "Deudas", { mensaje: md, detalle: dividasData });
 
     } catch (error) {
-        console.error(error);
+        console.error("Error en buscar-credores:", error);
         res.status(500).json({ error: "Error interno leyendo caché" });
     }
 });
