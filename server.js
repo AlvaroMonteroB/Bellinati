@@ -88,7 +88,7 @@ const simulacionDB = {
     "46483299885": { "cpf_cnpj": "46483299885", "nombre": "Usuario Test 464" },
     "26776559856": { "cpf_cnpj": "26776559856", "nombre": "Usuario Test 267" },
     "04513675020": { "cpf_cnpj": "04513675020", "nombre": "Usuario Test 045" },
-    "02637364238": { "cpf_cnpj": "02637364238", "nombre": "Usuario Test 0263" },
+    //"02637364238": { "cpf_cnpj": "02637364238", "nombre": "Usuario Test 0263" },
     "06430897052": { "cpf_cnpj": "06430897052", "nombre": "Usuario Test 064" },
     "10173421997": { "cpf_cnpj": "10173421997", "nombre": "Usuario Test 101" },
     "04065282330": { "cpf_cnpj": "04065282330", "nombre": "Usuario Test 040" },
