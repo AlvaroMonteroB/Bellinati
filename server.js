@@ -95,7 +95,7 @@ const simulacionDB = {
     "09241820918": { "cpf_cnpj": "09241820918", "nombre": "Usuario Test 092" },
     "63618955308": { "cpf_cnpj": "63618955308", "nombre": "Usuario Test 636" },
     "+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
-    "default": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" }
+    
 };
 
 // --- LOGICA DE CONEXIÓN REAL (SOLO SE USA PARA SYNC Y EMISIÓN) ---
