@@ -228,6 +228,7 @@ app.post('/api/negociacao/buscar-credores', async (req, res) => {
                         md += `  - 📄 Contrato: ${contrato.numero || contrato.documento}\n`;
                         md += `  - 📅 **Días de Atraso:** ${contrato.diasAtraso}\n`; // <--- AQUI AGREGAMOS EL DATO
                         md += `  - 💲 Valor Original: R$ ${contrato.valor}\n`;
+                        md+=`Poderia explicar por que não pagou sua dívida\n`;
                     });
                 } else {
                     md += "  - Sin detalles de contratos.\n";
@@ -266,7 +267,7 @@ app.post('/api/negociacao/buscar-opcoes-pagamento', async (req, res) => {
             });
         }
 
-        responder(res, 200, "Opciones (Caché)", { ...simulacionData, mensaje: md });
+        responder(res, 200, "Opciones", { ...simulacionData, mensaje: md });
 
     } catch (error) {
         res.status(500).json({ error: "Error leyendo caché" });
