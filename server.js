@@ -86,13 +86,13 @@ const simulacionDB = {
     "46483299885": { "cpf_cnpj": "46483299885", "nombre": "Usuario Test 464" },
     "26776559856": { "cpf_cnpj": "26776559856", "nombre": "Usuario Test 267" },
     "04513675020": { "cpf_cnpj": "04513675020", "nombre": "Usuario Test 045" },
-    "06430897052": { "cpf_cnpj": "06430897052", "nombre": "Usuario Test 064" },
+    //"06430897052": { "cpf_cnpj": "06430897052", "nombre": "Usuario Test 064" },
     "10173421997": { "cpf_cnpj": "10173421997", "nombre": "Usuario Test 101" },
     "04065282330": { "cpf_cnpj": "04065282330", "nombre": "Usuario Test 040" },
     "09241820918": { "cpf_cnpj": "09241820918", "nombre": "Usuario Test 092" },
     "63618955308": { "cpf_cnpj": "63618955308", "nombre": "Usuario Test 636" },
     "+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
-    "+5519981516633": { "cpf_cnpj": "29103077861", "nombre": "Bruno" }
+    "+5519981516633": { "cpf_cnpj": "06430897052", "nombre": "Bruno" }
 };
 
 // --- LOGICA DE CONEXIÓN REAL (SOLO SE USA PARA SYNC Y EMISIÓN) ---
