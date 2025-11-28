@@ -92,6 +92,7 @@ const simulacionDB = {
     "09241820918": { "cpf_cnpj": "09241820918", "nombre": "Usuario Test 092" },
     "63618955308": { "cpf_cnpj": "63618955308", "nombre": "Usuario Test 636" },
     "+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
+    "+5519981516633": { "cpf_cnpj": "29103077861", "nombre": "Bruno" }
 };
 
 // --- LOGICA DE CONEXIÓN REAL (SOLO SE USA PARA SYNC Y EMISIÓN) ---
@@ -392,18 +393,18 @@ app.post('/api/negociacao/emitir-boleto', async (req, res) => {
         }
 
         // 4. Emitir Boleto
-        const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', {
-            Crm: ctx.Crm,
-            Carteira: ctx.Carteira,
-            CNPJ_CPF: ctx.cpf_cnpj,
-            fase: ctx.fase,
-            Contrato: ctx.Contratos[0],
-            Valor: opcion.valor,
-            Parcelas: Parcelas,
-            DataVencimento: opcion.dataVencimento || DataVencimento,
-            Identificador: idFinal,
-            TipoContrato: null
-        }, { headers: { 'Authorization': `Bearer ${ctx.token}` }});
+        // const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', {
+        //     Crm: ctx.Crm,
+        //     Carteira: ctx.Carteira,
+        //     CNPJ_CPF: ctx.cpf_cnpj,
+        //     fase: ctx.fase,
+        //     Contrato: ctx.Contratos[0],
+        //     Valor: opcion.valor,
+        //     Parcelas: Parcelas,
+        //     DataVencimento: opcion.dataVencimento || DataVencimento,
+        //     Identificador: idFinal,
+        //     TipoContrato: null
+        // }, { headers: { 'Authorization': `Bearer ${ctx.token}` }});
 
         // 5. Generar mensajes bilingües
         const md_es = `¡Listo! Boleto generado.\n\n` +
