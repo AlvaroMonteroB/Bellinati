@@ -405,9 +405,7 @@ async function logicEmitirBoleto(req, res) {
 
         // 3. EMITIR BOLETO FINAL
         console.log(`🚀 Emitiendo boleto... ID: ${idFinal}, Valor: ${valorFinal}`);
-        
-        const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', {
-            Crm: ctx.Crm,
+        payload={Crm: ctx.Crm,
             Carteira: ctx.Carteira,
             CNPJ_CPF: ctx.cpf_cnpj,
             fase: ctx.fase,
@@ -416,7 +414,11 @@ async function logicEmitirBoleto(req, res) {
             Parcelas: parcelasFinal,
             DataVencimento: dataVencFinal,
             Identificador: idFinal,
-            TipoContrato: null
+            TipoContrato: null};
+            console.log(payload);
+        
+        const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', {
+            payload
         }, { headers: { 'Authorization': `Bearer ${ctx.token}` } });
 
         // 4. RESPUESTA FINAL BILINGÜE
