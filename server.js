@@ -390,7 +390,10 @@ async function logicResumoBoleto(req, res) {
 
 // D. Emitir Boleto (INTELIGENTE: Basado en Selección 'opt')
 async function logicEmitirBoleto(req, res) {
-    return (responder("Boleto emitido com sucesso, nossos agentes entrarão em contato com você",200,"Ticket exitoso","aux",{msg:"Respuesta"}))
+    return responder(res, 200, "Ticket Generado", "Ticket Gerado", { status: "success" }, 
+    "Ticket generado con éxito. Nuestros agentes se pondrán en contacto contigo pronto.", 
+    "Ticket gerado com sucesso. Nossos agentes entrarão em contato em breve."
+);
     const { function_call_username, opt, Parcelas } = req.body;
     
     // Necesitamos 'opt' O bien 'Parcelas' manuales.
