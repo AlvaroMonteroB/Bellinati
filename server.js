@@ -105,61 +105,104 @@ async function getAuthToken(cpf_cnpj) {
     return response.data.token || response.data.access_token;
 }
 
+
 // Función de sincronización en segundo plano
 async function procesarYGuardarUsuario(phone, userData) {
-    try {
-        console.log(`🔄 Procesando ${phone} (${userData.cpf_cnpj})...`);
-        const token = await getAuthToken(userData.cpf_cnpj);
 
-        // 1. Busca Credores
-        const resCredores = await apiNegocie.get('/api/v5/busca-credores', {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const credoresData = resCredores.data;
-        
-        if (!credoresData.credores?.length) return console.log(`⚠️ ${phone} sin acreedores.`);
+try {
 
-        const credor = credoresData.credores[0];
-        const carteiraInfo = credor.carteiraCrms?.[0];
-        const carteiraId = carteiraInfo?.carteiraId || carteiraInfo?.id;
+console.log(`🔄 Procesando ${phone} (${userData.cpf_cnpj})...`);
 
-        // 2. Busca Deuda Detallada
-        const bodyDivida = { financeira: credor.financeira, crms: credor.crms };
-        const resDividas = await apiNegocie.post('/api/v5/busca-divida', bodyDivida, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const dividasData = resDividas.data;
+const token = await getAuthToken(userData.cpf_cnpj);
 
-        // 3. Simula Opciones (Pre-calcula una oferta estándar)
-        let contratosDocs = [];
-        dividasData.forEach(d => d.contratos?.forEach(c => {
-            if (c.documento || c.numero) contratosDocs.push(String(c.documento || c.numero));
-        }));
 
-        const bodySimulacion = {
-            Crm: credor.crms[0],
-            Carteira: carteiraId,
-            Contratos: contratosDocs,
-            DataVencimento: null, 
-            ValorEntrada: 0,
-            QuantidadeParcela: 0,
-            ValorParcela: 0
-        };
+// 1. Busca Credores
 
-        const resSimulacion = await apiNegocie.post('/api/v5/busca-opcao-pagamento', bodySimulacion, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const simulacionData = resSimulacion.data;
+const resCredores = await apiNegocie.get('/api/v5/busca-credores', {
 
-        // 4. GUARDAR EN CACHÉ (SQLITE)
-        await saveToCache(phone, userData.cpf_cnpj, credoresData, dividasData, simulacionData);
-        console.log(`✅ ${phone} guardado exitosamente.`);
-        return true;
+headers: { 'Authorization': `Bearer ${token}` }
 
-    } catch (error) {
-        console.error(`❌ Error sincronizando ${phone}:`, error.message);
-        return false;
-    }
+});
+
+const credoresData = resCredores.data;
+
+if (!credoresData.credores?.length) return console.log(`⚠️ ${phone} sin acreedores.`);
+
+
+const credor = credoresData.credores[0];
+
+const carteiraInfo = credor.carteiraCrms?.[0];
+
+const carteiraId = carteiraInfo?.carteiraId || carteiraInfo?.id;
+
+
+// 2. Busca Deuda Detallada
+
+const bodyDivida = { financeira: credor.financeira, crms: credor.crms };
+
+const resDividas = await apiNegocie.post('/api/v5/busca-divida', bodyDivida, {
+
+headers: { 'Authorization': `Bearer ${token}` }
+
+});
+
+const dividasData = resDividas.data;
+
+
+// 3. Simula Opciones (Pre-calcula una oferta estándar)
+
+// Extraemos contratos para simulación
+
+let contratosDocs = [];
+
+dividasData.forEach(d => d.contratos?.forEach(c => contratosDocs.push(String(c.numero))));
+
+
+const bodySimulacion = {
+
+Crm: credor.crms[0],
+
+Carteira: carteiraId,
+
+Contratos: contratosDocs,
+
+DataVencimento: null, // Dejar que la API decida vencimiento por defecto
+
+ValorEntrada: 0,
+
+QuantidadeParcela: 0,
+
+ValorParcela: 0
+
+};
+
+
+const resSimulacion = await apiNegocie.post('/api/v5/busca-opcao-pagamento', bodySimulacion, {
+
+headers: { 'Authorization': `Bearer ${token}` }
+
+});
+
+const simulacionData = resSimulacion.data;
+
+
+// 4. GUARDAR EN CACHÉ (SQLITE)
+
+await saveToCache(phone, userData.cpf_cnpj, credoresData, dividasData, simulacionData);
+
+console.log(`✅ ${phone} guardado exitosamente.`);
+
+return true;
+
+
+} catch (error) {
+
+console.error(`❌ Error sincronizando ${phone}:`, error.message);
+
+return false;
+
+}
+
 }
 
 // ==========================================
