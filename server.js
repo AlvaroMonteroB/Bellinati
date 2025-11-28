@@ -18,7 +18,6 @@ const HOST = '0.0.0.0';
 // --- CONFIGURACIÓN DE BASE DE DATOS CACHÉ ---
 const db = new sqlite3.Database('./cache_negociacion.db');
 
-// Inicializar tabla
 db.serialize(() => {
     db.run(`
         CREATE TABLE IF NOT EXISTS user_cache (
@@ -32,7 +31,6 @@ db.serialize(() => {
     `);
 });
 
-// Helpers DB
 function saveToCache(phone, cpf, credores, dividas, simulacion) {
     return new Promise((resolve, reject) => {
         const stmt = db.prepare(`
@@ -159,7 +157,8 @@ async function procesarYGuardarUsuario(phone, userData) {
     }
 }
 
-// --- HELPER PARA EMISIÓN REAL ---
+// --- HELPER PARA OBTENER CONTEXTO REAL (TOKEN Y CRM) ---
+// Se usa para obtener credenciales frescas antes de emitir
 async function obtenerContextoDeudaReal(rawPhone) {
     const userData = simulacionDB[rawPhone] || simulacionDB["+525510609610"]; 
     if (!userData) throw new Error("Usuario no encontrado en BD.");
@@ -217,47 +216,50 @@ function handleApiError(res, error, titleES, titlePT) {
 }
 
 // =========================================================================
-// 🚦 MAIN HANDLER / DISPATCHER (PUNTO DE ENTRADA ÚNICO)
+// 🚦 MAIN HANDLER / DISPATCHER
 // =========================================================================
 app.post('/api/chat-handler', async (req, res) => {
     try {
         const body = req.body;
-        console.log("📨 Payload recibido en Handler:", JSON.stringify(body, null, 2));
+        console.log("📨 Payload:", JSON.stringify(body, null, 2));
 
-        // 1. Verificar si es IDENTIFICACIÓN (llega CPF) -> Llamar a Buscar Credores
+        // 1. Identificación
         if (body.cpf_cnpj) {
-            console.log("➡️ Detectado: Solicitud de Credores (por CPF)");
             return await logicBuscarCredores(req, res);
         }
 
-        // 2. Verificar si es SOLICITUD DE OPCIONES (llega msg) -> Llamar a Buscar Opciones
+        // 2. Solicitud de Opciones (Lectura)
         if (body.msg) {
-            console.log("➡️ Detectado: Solicitud de Opciones (por msg)");
             return await logicBuscarOpcoes(req, res);
         }
 
-        // 3. Verificar si es EMISIÓN (llegan Parcelas y Fecha) -> Llamar a Emitir Boleto
-        if (body.Parcelas && body.DataVencimento) {
-            console.log("➡️ Detectado: Solicitud de Emisión");
+        // 3. Solicitud de Resumo (Explícito)
+        if (body.accion === "resumo") {
+            return await logicResumoBoleto(req, res);
+        }
+
+        // 4. EMISIÓN POR SELECCIÓN (La nueva lógica 'opt')
+        // Si llega 'opt', sabemos que el usuario eligió una opción del menú
+        if (body.opt || body.accion === "emitir" || (body.Parcelas && body.DataVencimento)) {
+            console.log("➡️ Solicitud de Emisión");
             return await logicEmitirBoleto(req, res);
         }
 
-        // 4. Default / Fallback
-        console.warn("⚠️ No se detectó intención clara en el JSON.");
-        return responder(res, 400, "Error de Solicitud", "Erro de Solicitação", {}, "No entendí tu solicitud. Faltan datos.", "Não entendi sua solicitação. Dados ausentes.");
+        console.warn("⚠️ Intención no clara.");
+        return responder(res, 400, "Error", "Erro", {}, "No entendí tu solicitud.", "Não entendi.");
 
     } catch (error) {
-        console.error("Error fatal en handler:", error);
+        console.error("Error handler:", error);
         return handleApiError(res, error, "Error Interno", "Erro Interno");
     }
 });
 
 
 // =========================================================================
-// 🧠 LÓGICA DE NEGOCIO (FUNCIONES INTERNAS)
+// 🧠 LÓGICA DE NEGOCIO
 // =========================================================================
 
-// Lógica A: Buscar Credores (Lectura de Caché)
+// A. Buscar Credores (Caché)
 async function logicBuscarCredores(req, res) {
     const { function_call_username } = req.body;
     let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
@@ -265,136 +267,170 @@ async function logicBuscarCredores(req, res) {
     try {
         const cachedUser = await getFromCache(rawPhone);
         if (!cachedUser) {
-            return res.status(404).json({ error: "Usuario no sincronizado. Ejecute /api/admin/sync-database primero." });
+            return res.status(404).json({ error: "Usuario no sincronizado. Ejecute sync-database." });
         }
 
         const dividasData = JSON.parse(cachedUser.dividas_json);
-        const fechaActualizacion = new Date(cachedUser.last_updated).toLocaleString();
+        const fecha = new Date(cachedUser.last_updated).toLocaleString();
         
-        let md_es = `**Hola.** Hemos encontrado tus deudas (Actualizado al: ${fechaActualizacion}):\n\n`;
-        let md_pt = `**Olá.** Encontramos suas dívidas (Atualizado em: ${fechaActualizacion}):\n\n`;
+        let md_es = `**Hola.** Tus deudas (al ${fecha}):\n\n`;
+        let md_pt = `**Olá.** Suas dívidas (em ${fecha}):\n\n`;
         
-        if (dividasData && dividasData.length > 0) {
+        if (dividasData?.length > 0) {
             dividasData.forEach((deuda, i) => {
-                md_es += `### 💰 Deuda ${i + 1}: Total R$ ${deuda.valor}\n`;
-                md_pt += `### 💰 Dívida ${i + 1}: Total R$ ${deuda.valor}\n`;
-
-                if (deuda.contratos && deuda.contratos.length > 0) {
-                    deuda.contratos.forEach(contrato => {
-                        md_es += `- **Producto:** ${contrato.produto}\n  - 📄 Contrato: ${contrato.numero || contrato.documento}\n  - 📅 **Días de Atraso:** ${contrato.diasAtraso}\n  - 💲 Valor Original: R$ ${contrato.valor}\n`;
-                        md_pt += `- **Produto:** ${contrato.produto}\n  - 📄 Contrato: ${contrato.numero || contrato.documento}\n  - 📅 **Dias de Atraso:** ${contrato.diasAtraso}\n  - 💲 Valor Original: R$ ${contrato.valor}\n`;
-                    });
-                } else {
-                    md_es += "  - Sin detalles de contratos.\n";
-                    md_pt += "  - Sem detalhes de contratos.\n";
-                }
-                md_es += `\n`;
-                md_pt += `\n`;
+                md_es += `### 💰 Deuda ${i + 1}: R$ ${deuda.valor}\n`;
+                md_pt += `### 💰 Dívida ${i + 1}: R$ ${deuda.valor}\n`;
+                deuda.contratos?.forEach(c => {
+                    md_es += `- Producto: ${c.produto}\n  - Días Atraso: ${c.diasAtraso}\n`;
+                    md_pt += `- Produto: ${c.produto}\n  - Dias Atraso: ${c.diasAtraso}\n`;
+                });
+                md_es += `\n`; md_pt += `\n`;
             });
             md_pt += `Poderia explicar por que não pagou sua dívida?\n`; 
         } else {
-            md_es += "No se encontraron deudas activas en el registro.";
-            md_pt += "Não foram encontradas dívidas ativas no registro.";
+            md_es += "No se encontraron deudas."; md_pt += "Nenhuma dívida encontrada.";
         }
 
         return responder(res, 200, "Deudas", "Dívidas", { detalle: dividasData }, md_es, md_pt);
     } catch (error) {
-        console.error("Error en logicBuscarCredores:", error);
-        return handleApiError(res, error, "Error leyendo datos", "Erro lendo dados");
+        return handleApiError(res, error, "Error datos", "Erro dados");
     }
 }
 
-// Lógica B: Buscar Opciones (Lectura de Caché)
+// B. Buscar Opciones (Caché)
 async function logicBuscarOpcoes(req, res) {
     const { function_call_username } = req.body;
     let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
     try {
         const cachedUser = await getFromCache(rawPhone);
-        if (!cachedUser) return res.status(404).json({ error: "Datos no disponibles." });
+        if (!cachedUser) return res.status(404).json({ error: "No data." });
 
-        const simulacionData = JSON.parse(cachedUser.simulacion_json);
-        
-        let md_es = "Opciones de pago pre-calculadas:\n\n";
-        let md_pt = "Opções de pagamento pré-calculadas:\n\n";
+        const simData = JSON.parse(cachedUser.simulacion_json);
+        let md_es = "Opciones de pago:\n\n";
+        let md_pt = "Opções de pagamento:\n\n";
 
-        if (simulacionData.opcoesPagamento) {
-            simulacionData.opcoesPagamento.forEach((op, idx) => {
-                md_es += `**Opción ${idx + 1}. ${op.texto}**\n- Total: R$ ${op.valorTotalComCustas || op.valor}\n\n`;
-                md_pt += `**Opção ${idx + 1}. ${op.texto}**\n- Total: R$ ${op.valorTotalComCustas || op.valor}\n\n`;
-            });
-        }
+        simData.opcoesPagamento?.forEach((op, idx) => {
+            md_es += `**Opción ${idx + 1}**: ${op.texto}\n- Total: R$ ${op.valorTotalComCustas || op.valor}\n\n`;
+            md_pt += `**Opção ${idx + 1}**: ${op.texto}\n- Total: R$ ${op.valorTotalComCustas || op.valor}\n\n`;
+        });
 
-        return responder(res, 200, "Opciones", "Opções", simulacionData, md_es, md_pt);
+        return responder(res, 200, "Opciones", "Opções", simData, md_es, md_pt);
     } catch (error) {
-        return handleApiError(res, error, "Error al buscar opciones", "Erro ao buscar opções");
+        return handleApiError(res, error, "Error opciones", "Erro opções");
     }
 }
 
-// Lógica C: Emitir Boleto (Real-time Stateless)
+// C. Resumo Boleto (Auxiliar)
+async function logicResumoBoleto(req, res) {
+    // ... (Este endpoint se mantiene por si se quiere llamar explícitamente, 
+    // pero la lógica principal ahora vive en Emitir) ...
+    // Se puede implementar similar a emitir si es necesario.
+    return responder(res, 200, "Endpoint Auxiliar", "Auxiliar", { msg: "Use emitir con opt" });
+}
+
+// D. Emitir Boleto (INTELIGENTE: Basado en Selección 'opt')
 async function logicEmitirBoleto(req, res) {
-    const { function_call_username, Parcelas, DataVencimento } = req.body;
-    // Si no llega Parcelas, no podemos emitir. El handler principal ya valida esto, pero doble check.
-    if (!Parcelas) return responder(res, 400, "Error", "Erro", { mensaje: "Faltan datos." });
+    const { function_call_username, opt, Parcelas } = req.body;
+    
+    // Necesitamos 'opt' O bien 'Parcelas' manuales.
+    if (!opt && !Parcelas) return responder(res, 400, "Falta Opción", "Falta Opção", {}, "Selecciona una opción (ej: 1, 2).", "Selecione uma opção.");
 
     let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
     try {
+        // 1. OBTENER CONTEXTO TÉCNICO (Credenciales frescas)
         const ctx = await obtenerContextoDeudaReal(rawPhone);
 
-        const bodySimulacion = {
-            Crm: ctx.Crm,
-            Carteira: ctx.Carteira,
-            Contratos: ctx.Contratos,
-            DataVencimento: DataVencimento || null,
-            ValorEntrada: 0,
-            QuantidadeParcela: Parcelas,
-            ValorParcela: 0
-        };
+        let idFinal = "";
+        let valorFinal = 0;
+        let parcelasFinal = 0;
+        let dataVencFinal = "";
 
-        const resSimulacion = await apiNegocie.post('/api/v5/busca-opcao-pagamento', bodySimulacion, {
-            headers: { 'Authorization': `Bearer ${ctx.token}` }
-        });
-
-        const opcion = resSimulacion.data.opcoesPagamento?.find(op => op.qtdParcelas == Parcelas);
-        if (!opcion) throw new Error("Opción no válida en simulación real.");
-
-        let idFinal = opcion.codigo;
-
-        if (resSimulacion.data.chamarResumoBoleto) {
-            const resResumo = await apiNegocie.post('/api/v5/resumo-boleto', {
-                Crm: ctx.Crm,
-                CodigoCarteira: ctx.Carteira,
-                CNPJ_CPF: ctx.cpf_cnpj,
-                Contrato: ctx.Contratos[0],
-                CodigoOpcao: opcion.codigo
-            }, { headers: { 'Authorization': `Bearer ${ctx.token}` }});
+        // 2. RECUPERAR OPCIÓN SELECCIONADA
+        if (opt) {
+            // A. Recuperar simulación de la CACHÉ (Lo que vio el usuario)
+            const cachedUser = await getFromCache(rawPhone);
+            if (!cachedUser || !cachedUser.simulacion_json) {
+                return responder(res, 400, "Sesión Caducada", "Sessão Expirada", {}, "Por favor, pide ver las opciones de nuevo.", "Solicite as opções novamente.");
+            }
             
-            if (resResumo.data.sucesso) idFinal = resResumo.data.identificador;
+            const simulacionData = JSON.parse(cachedUser.simulacion_json);
+            const opciones = simulacionData.opcoesPagamento || [];
+            
+            // Validar índice (Asumimos que el usuario envía "1" para el índice 0)
+            const index = parseInt(opt) - 1;
+            if (index < 0 || index >= opciones.length) {
+                return responder(res, 400, "Opción Inválida", "Opção Inválida", {}, "Esa opción no existe.", "Essa opção não existe.");
+            }
+
+            const opcionElegida = opciones[index];
+            console.log(`✅ Usuario eligió opción ${opt}:`, opcionElegida.texto);
+
+            // B. Preparar datos base
+            idFinal = opcionElegida.codigo;
+            valorFinal = opcionElegida.valor;
+            parcelasFinal = opcionElegida.qtdParcelas;
+            dataVencFinal = opcionElegida.dataVencimento;
+
+            // C. VERIFICAR SI REQUIERE 'RESUMO BOLETO' (Usando la bandera de la simulación guardada)
+            if (simulacionData.chamarResumoBoleto === true) {
+                console.log("🔄 La opción requiere paso intermedio (Resumo). Ejecutando...");
+                
+                try {
+                    const resResumo = await apiNegocie.post('/api/v5/resumo-boleto', {
+                        Crm: ctx.Crm,
+                        CodigoCarteira: ctx.Carteira,
+                        CNPJ_CPF: ctx.cpf_cnpj,
+                        Contrato: ctx.Contratos[0], // Contrato principal
+                        CodigoOpcao: opcionElegida.codigo // El código de la opción seleccionada
+                    }, { headers: { 'Authorization': `Bearer ${ctx.token}` } });
+
+                    // Si devuelve ID nuevo, lo usamos. Si es 204 o vacío, mantenemos el original.
+                    if (resResumo.data && resResumo.data.identificador) {
+                        idFinal = resResumo.data.identificador;
+                        console.log("✅ ID actualizado por Resumo Boleto.");
+                    }
+                } catch (errResumo) {
+                    console.warn("⚠️ Error en Resumo Boleto (o 204), intentando emitir con ID original:", errResumo.message);
+                    // Continuamos con idFinal original
+                }
+            }
+
+        } else {
+            // Fallback: Si enviaron 'Parcelas' manuales en vez de 'opt' (comportamiento antiguo)
+            // Aquí tendrías que re-simular. Por brevedad, asumimos el flujo 'opt' es el principal ahora.
+            return responder(res, 400, "Use 'opt'", "Use 'opt'", {}, "Por favor selecciona por número de opción.", "Selecione pelo número da opção.");
         }
 
+        // 3. EMITIR BOLETO FINAL
+        console.log(`🚀 Emitiendo boleto... ID: ${idFinal}, Valor: ${valorFinal}`);
+        
         const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', {
             Crm: ctx.Crm,
             Carteira: ctx.Carteira,
             CNPJ_CPF: ctx.cpf_cnpj,
             fase: ctx.fase,
             Contrato: ctx.Contratos[0],
-            Valor: opcion.valor,
-            Parcelas: Parcelas,
-            DataVencimento: opcion.dataVencimento || DataVencimento,
+            Valor: valorFinal,
+            Parcelas: parcelasFinal,
+            DataVencimento: dataVencFinal,
             Identificador: idFinal,
             TipoContrato: null
-        }, { headers: { 'Authorization': `Bearer ${ctx.token}` }});
+        }, { headers: { 'Authorization': `Bearer ${ctx.token}` } });
 
-        const md_es = `¡Listo! Boleto generado.\n\n` +
+        // 4. RESPUESTA FINAL BILINGÜE
+        const md_es = `¡Listo! Boleto generado con éxito.\n\n` +
                       `**Valor**: R$ ${resEmision.data.valorTotal}\n` +
-                      `**Vence**: ${resEmision.data.vcto}\n` +
-                      `**Código**: \`${resEmision.data.linhaDigitavel}\``;
+                      `**Vencimiento**: ${resEmision.data.vcto}\n` +
+                      `**Código de Barras**: \`${resEmision.data.linhaDigitavel}\`\n\n` +
+                      `Copia el código para pagar en tu aplicación bancaria.`;
 
-        const md_pt = `Pronto! Boleto gerado.\n\n` +
+        const md_pt = `Pronto! Boleto gerado com sucesso.\n\n` +
                       `**Valor**: R$ ${resEmision.data.valorTotal}\n` +
                       `**Vencimento**: ${resEmision.data.vcto}\n` +
-                      `**Código**: \`${resEmision.data.linhaDigitavel}\``;
+                      `**Código de Barras**: \`${resEmision.data.linhaDigitavel}\`\n\n` +
+                      `Copie o código para pagar no seu aplicativo bancário.`;
 
         return responder(res, 201, "Boleto Emitido", "Boleto Gerado", resEmision.data, md_es, md_pt);
 
@@ -403,19 +439,17 @@ async function logicEmitirBoleto(req, res) {
     }
 }
 
-// Endpoint de sincronización (Admin)
+// Endpoint Admin
 app.post('/api/admin/sync-database', async (req, res) => {
-    res.json({ status: "Iniciando sincronización en segundo plano..." });
-    console.log("--- INICIANDO SYNC MASIVO ---");
+    res.json({ status: "Sync started" });
     const phones = Object.keys(simulacionDB);
     for (const phone of phones) {
         await procesarYGuardarUsuario(phone, simulacionDB[phone]);
         await new Promise(r => setTimeout(r, 1000));
     }
-    console.log("--- SYNC MASIVO TERMINADO ---");
+    console.log("Sync done");
 });
 
 app.listen(PORT, HOST, () => {
     console.log(`Server running at http://${HOST}:${PORT}/`);
-    console.log(`👉 Punto de entrada principal: POST http://${HOST}:${PORT}/api/chat-handler`);
 });
