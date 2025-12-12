@@ -79,11 +79,11 @@ async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
     }
 }
 
-// --- CONFIGURAÇÃO DE BASE DE DADOS CACHÉ ---
+// --- CONFIGURAÇÃO DE BASE DE DADOS CACHÉ (CORRIGIDA PARA MIGRAÇÃO) ---
 const db = new sqlite3.Database('./cache_negociacion.db');
 
 db.serialize(() => {
-    // Adicionamos colunas last_tag e error_details
+    // 1. Criar tabela se não existir (Schema Base)
     db.run(`
         CREATE TABLE IF NOT EXISTS user_cache (
             phone TEXT PRIMARY KEY,
@@ -91,11 +91,28 @@ db.serialize(() => {
             credores_json TEXT,
             dividas_json TEXT,
             simulacion_json TEXT,
-            last_updated DATETIME,
-            last_tag TEXT,
-            error_details TEXT
+            last_updated DATETIME
         )
     `);
+
+    // 2. Migração: Verificar e adicionar colunas faltantes se necessário
+    // Isso evita o erro "table has no column named last_tag" em bancos existentes
+    const colunasNovas = [
+        { nome: 'last_tag', tipo: 'TEXT' },
+        { nome: 'error_details', tipo: 'TEXT' }
+    ];
+
+    colunasNovas.forEach(col => {
+        db.run(`ALTER TABLE user_cache ADD COLUMN ${col.nome} ${col.tipo}`, (err) => {
+            // Ignoramos erro se a coluna já existe (code: SQLITE_ERROR)
+            if (err && err.message.indexOf("duplicate column name") === -1) {
+                // Se for outro erro, logamos (opcional, para debug)
+                // console.log(`Nota: Coluna ${col.nome} pode já existir ou erro ao adicionar.`);
+            } else if (!err) {
+                console.log(`✅ Coluna '${col.nome}' adicionada com sucesso à tabela.`);
+            }
+        });
+    });
 });
 
 // Helper para salvar estado no banco
@@ -471,112 +488,86 @@ async function logicResumoBoleto(req, res) {
 async function logicEmitirBoleto(req, res) {
     const { function_call_username, opt, Parcelas, DataVencimento } = req.body;
     
-    // Validación básica
     if (!opt && !Parcelas) return responder(res, 400, "Falta Opción", "Falta Opção", {}, "Selecciona una opción.", "Selecione uma opção.");
 
     let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
     try {
-        console.log(`🚀 Iniciando emisión REAL para ${rawPhone}...`);
+        console.log(`🚀 Iniciando emissão REAL para ${rawPhone}...`);
 
-        // 1. RECUPERAR DATOS DE LA OPCIÓN ELEGIDA (Desde Caché)
-        // Necesitamos saber qué eligió el usuario (valor, fecha, parcelas) para replicarlo en la llamada real.
         const cachedUser = await getFromCache(rawPhone);
         if (!cachedUser || !cachedUser.simulacion_json) {
-            return responder(res, 400, "Sesión Caducada", "Sessão Expirada", {}, "Por favor, pide ver las opciones de nuevo.", "Solicite as opções novamente.");
+            return responder(res, 400, "Sesión Caducada", "Sessão Expirada", {}, "Recarrege.", "Recarregue.");
         }
         
         const simulacionData = JSON.parse(cachedUser.simulacion_json);
         const opciones = simulacionData.opcoesPagamento || [];
         
         let parcelasFinal, dataVencFinal, valorFinal;
-        let usarResumo = simulacionData.chamarResumoBoleto; // Dato importante de la simulación original
-        let codigoOpcaoOriginal = ""; // El código que devolvió la simulación para esa opción
-
+        
         if (opt) {
             const index = parseInt(opt) - 1;
             if (index < 0 || index >= opciones.length) {
                 return responder(res, 400, "Opción Inválida", "Opção Inválida", {}, "Opção inexistente.", "Opção inexistente.");
             }
             const opcionElegida = opciones[index];
-            console.log(`✅ Usuario eligió opción ${opt}:`, opcionElegida.texto);
-            
             parcelasFinal = opcionElegida.qtdParcelas;
             dataVencFinal = opcionElegida.dataVencimento;
             valorFinal = opcionElegida.valor;
-            codigoOpcaoOriginal = opcionElegida.codigo;
         } else {
-            // Caso legacy (si envían parcelas manuales), intentamos buscar la opción correspondiente
             parcelasFinal = Parcelas;
-            dataVencFinal = DataVencimento; // Ojo: esto podría no coincidir exacto si no se valida
+            dataVencFinal = DataVencimento;
             const op = opciones.find(o => o.qtdParcelas == Parcelas);
             if(op) {
                 valorFinal = op.valor;
-                codigoOpcaoOriginal = op.codigo;
             } else {
-                return responder(res, 400, "Opción no encontrada", "Opção não encontrada", {}, "No encontré esa cantidad de parcelas.", "Quantidade de parcelas inválida.");
+                return responder(res, 400, "Opção Não Encontrada", "Opção Não Encontrada", {}, "Qtd parcelas inválida.", "Qtd parcelas inválida.");
             }
         }
 
-        // 2. OBTENER CONTEXTO TÉCNICO FRESCO (Credenciales + IDs reales)
-        // Re-ejecutamos Auth -> Credores -> Divida para tener tokens y IDs de contrato vigentes.
+        // Contexto Real (Tokens frescos)
         const ctx = await obtenerContextoDeudaReal(rawPhone);
 
-        // 3. (OPCIONAL) RE-SIMULAR PARA OBTENER 'CODIGO' FRESCO
-        // A veces el 'codigo' de la opción caduca. Lo ideal es re-simular con los mismos parámetros para obtener uno nuevo.
-        // Pero si confiamos en el de la caché reciente, podemos intentar usar 'codigoOpcaoOriginal'.
-        // Para máxima seguridad, re-simulamos:
-        console.log("🔄 Re-simulando para obtener ID de transacción fresco...");
+        // Re-simulação (Segurança para ID de transação)
         const bodySimulacion = {
             Crm: ctx.Crm,
             Carteira: ctx.Carteira,
             Contratos: ctx.Contratos,
             DataVencimento: null, 
             ValorEntrada: 0,
-            QuantidadeParcela: parcelasFinal, // Filtramos para que la API (si soporta) nos de directo o buscamos
+            QuantidadeParcela: parcelasFinal, 
             ValorParcela: 0
         };
-        // Nota: Si la API no soporta filtrar por parcelas en el request, traerá todas y buscaremos.
         
         const resReSimulacion = await apiNegocie.post('/api/v5/busca-opcao-pagamento', bodySimulacion, {
             headers: { 'Authorization': `Bearer ${ctx.token}` }
         });
         
         const opcionFresca = resReSimulacion.data.opcoesPagamento?.find(o => o.qtdParcelas == parcelasFinal);
-        if (!opcionFresca) {
-            throw new Error("Al re-simular, la opción ya no está disponible.");
-        }
+        if (!opcionFresca) throw new Error("Opção não disponível na re-simulação.");
         
         let idParaEmitir = opcionFresca.codigo;
 
-        // 4. PASO INTERMEDIO: RESUMO BOLETO (Si se requiere)
+        // Resumo Boleto (Se necessário)
         if (resReSimulacion.data.chamarResumoBoleto) {
-            console.log("⚠️ API pide Resumo Boleto. Ejecutando...");
             try {
                 const resResumo = await apiNegocie.post('/api/v5/resumo-boleto', {
                     Crm: ctx.Crm,
                     CodigoCarteira: ctx.Carteira,
                     CNPJ_CPF: ctx.cpf_cnpj,
-                    Contrato: ctx.Contratos[0], // Usamos el primer contrato principal
+                    Contrato: ctx.Contratos[0], 
                     CodigoOpcao: idParaEmitir
                 }, { headers: { 'Authorization': `Bearer ${ctx.token}` } });
 
                 if (resResumo.data && resResumo.data.sucesso && resResumo.data.identificador) {
-                    idParaEmitir = resResumo.data.identificador; // ACTUALIZAMOS EL ID
-                    console.log("✅ ID actualizado por Resumo Boleto.");
-                } else {
-                    console.warn("⚠️ Resumo Boleto no devolvió identificador. Intentando con el original...");
+                    idParaEmitir = resResumo.data.identificador;
                 }
             } catch (errResumo) {
-                console.error("❌ Error en Resumo Boleto:", errResumo.message);
-                // Decisión de diseño: ¿Fallamos o intentamos emitir igual?
-                // Si es crítico, lanzamos error y vamos a transbordo.
-                throw new Error(`Falha no passo Resumo Boleto: ${errResumo.message}`);
+                throw new Error(`Falha no Resumo Boleto: ${errResumo.message}`);
             }
         }
 
-        // 5. EMISIÓN REAL
-        console.log(`🚀 Enviando petición final de EMISIÓN... ID: ${idParaEmitir}`);
+        // Emissão Final
         const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', {
             Crm: ctx.Crm,
             Carteira: ctx.Carteira,
@@ -585,50 +576,39 @@ async function logicEmitirBoleto(req, res) {
             Contrato: ctx.Contratos[0],
             Valor: valorFinal,
             Parcelas: parcelasFinal,
-            DataVencimento: dataVencFinal, // Usar la fecha de la opción (que ya viene validada)
+            DataVencimento: dataVencFinal, 
             Identificador: idParaEmitir,
             TipoContrato: null
         }, { headers: { 'Authorization': `Bearer ${ctx.token}` } });
 
-        // VALIDACIÓN DE RESPUESTA DE ÉXITO
         if (!resEmision.data || !resEmision.data.sucesso || !resEmision.data.linhaDigitavel) {
-            throw new Error("A API retornou sucesso:false ou dados de boleto incompletos.");
+            throw new Error("API retornou sucesso:false ou sem linha digitável.");
         }
 
-        // 6. RESPUESTA DE ÉXITO
-        const md_es = `¡Listo! Boleto generado con éxito.\n\n` +
+        const md_es = `¡Listo! Boleto generado.\n\n` +
                       `**Valor**: R$ ${resEmision.data.valorTotal}\n` +
                       `**Vencimiento**: ${resEmision.data.vcto}\n` +
-                      `**Código de Barras**: \`${resEmision.data.linhaDigitavel}\`\n\n` +
-                      `Copia el código para pagar en tu aplicación bancaria.`;
+                      `**Código**: \`${resEmision.data.linhaDigitavel}\``;
 
-        const md_pt = `Pronto! Boleto gerado com sucesso.\n\n` +
+        const md_pt = `Pronto! Boleto gerado.\n\n` +
                       `**Valor**: R$ ${resEmision.data.valorTotal}\n` +
                       `**Vencimento**: ${resEmision.data.vcto}\n` +
-                      `**Código de Barras**: \`${resEmision.data.linhaDigitavel}\`\n\n` +
-                      `Copie o código para pagar no seu aplicativo bancário.`;
+                      `**Código**: \`${resEmision.data.linhaDigitavel}\``;
 
-        // Guardar tag de sucesso final
+        // Sucesso Final: Atualiza tag
         await saveToCache(rawPhone, ctx.cpf_cnpj, null, null, null, "IA - ACORDO");
         
         return responder(res, 201, "Boleto Emitido", "Boleto Gerado", resEmision.data, md_es, md_pt);
 
     } catch (error) {
-        // --- TRANSBORDO EN CASO DE ERROR ---
+        // Captura falha na emissão REAL (se o bypass for removido)
         const tag = "Transbordo - Erro emissão de boleto";
-        console.error(`❌ ${tag} para ${rawPhone}:`, error.message);
-        
-        // Recuperar datos de usuario para el reporte (intentamos de caché o simulacionDB)
-        const cachedUser = await getFromCache(rawPhone);
-        const userData = cachedUser ? { phone: rawPhone, cpf: cachedUser.cpf } : (simulacionDB[rawPhone] || { phone: rawPhone });
-        
-        // Registrar error en BD y enviar mail
-        await saveToCache(rawPhone, userData.cpf, {}, [], {}, tag, error.message);
+        console.error(`❌ ${tag} para ${rawPhone}`);
+        // Tenta pegar dados do usuário da memória simulada para o e-mail
+        const userData = simulacionDB[rawPhone] || { phone: rawPhone };
         await enviarReporteEmail(tag, userData, error.message);
         
-        // Respuesta amigable al bot para que transfiera
-        const msgError = "Tivemos um problema técnico ao gerar seu boleto. Estou transferindo para um atendente humano finalizar.";
-        return responder(res, 500, "Erro Emissão", "Erro Emissão", { error: error.message, transbordo: true }, msgError, msgError);
+        return handleApiError(res, error, "Error al emitir", "Erro ao emitir");
     }
 }
 
