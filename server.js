@@ -18,7 +18,7 @@ app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 
-// --- CONFIGURAÇÃO DE E-MAIL (NODEMAILER) ---
+// --- CONFIGURACIÓN DE E-MAIL (NODEMAILER) ---
 const transporter = nodemailer.createTransport({
     service: process.env.EMAIL_SERVICE || 'gmail',
     auth: {
@@ -79,11 +79,11 @@ async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
     }
 }
 
-// --- CONFIGURAÇÃO DE BASE DE DADOS CACHÉ (CORRIGIDA PARA MIGRAÇÃO) ---
+// --- CONFIGURACIÓN DE BASE DE DATOS CACHÉ ---
 const db = new sqlite3.Database('./cache_negociacion.db');
 
 db.serialize(() => {
-    // 1. Criar tabela se não existir (Schema Base)
+    // 1. Crear tabla base si no existe
     db.run(`
         CREATE TABLE IF NOT EXISTS user_cache (
             phone TEXT PRIMARY KEY,
@@ -95,8 +95,7 @@ db.serialize(() => {
         )
     `);
 
-    // 2. Migração: Verificar e adicionar colunas faltantes se necessário
-    // Isso evita o erro "table has no column named last_tag" em bancos existentes
+    // 2. Migración: Asegurar que existan las columnas de TAGS y ERRORES
     const colunasNovas = [
         { nome: 'last_tag', tipo: 'TEXT' },
         { nome: 'error_details', tipo: 'TEXT' }
@@ -104,18 +103,15 @@ db.serialize(() => {
 
     colunasNovas.forEach(col => {
         db.run(`ALTER TABLE user_cache ADD COLUMN ${col.nome} ${col.tipo}`, (err) => {
-            // Ignoramos erro se a coluna já existe (code: SQLITE_ERROR)
-            if (err && err.message.indexOf("duplicate column name") === -1) {
-                // Se for outro erro, logamos (opcional, para debug)
-                // console.log(`Nota: Coluna ${col.nome} pode já existir ou erro ao adicionar.`);
-            } else if (!err) {
-                console.log(`✅ Coluna '${col.nome}' adicionada com sucesso à tabela.`);
+            // Ignoramos el error si la columna ya existe
+            if (!err) {
+                console.log(`✅ Columna '${col.nome}' añadida a la tabla user_cache.`);
             }
         });
     });
 });
 
-// Helper para salvar estado no banco
+// Helper para guardar en BD con TAGS
 function saveToCache(phone, cpf, credores, dividas, simulacion, tag = "IA - ACORDO", errorDetails = null) {
     return new Promise((resolve, reject) => {
         const stmt = db.prepare(`
@@ -129,7 +125,7 @@ function saveToCache(phone, cpf, credores, dividas, simulacion, tag = "IA - ACOR
             JSON.stringify(dividas || []), 
             JSON.stringify(simulacion || {}), 
             tag, 
-            errorDetails,
+            errorDetails, 
             (err) => {
                 if (err) reject(err);
                 else resolve();
@@ -148,7 +144,7 @@ function getFromCache(phone) {
     });
 }
 
-// --- CONFIGURAÇÃO AXIOS ---
+// --- CONFIGURACIÓN AXIOS ---
 dns.setDefaultResultOrder('ipv4first');
 const apiAuth = axios.create({
     baseURL: 'https://bpdigital-api.bellinatiperez.com.br',
@@ -194,7 +190,7 @@ async function getAuthToken(cpf_cnpj) {
     return response.data.token || response.data.access_token;
 }
 
-// --- FUNÇÃO DE SINCRONIZAÇÃO INTELIGENTE (COM GESTÃO DE ERROS E E-MAIL) ---
+// --- FUNÇÃO DE SINCRONIZAÇÃO INTELIGENTE (COM GESTÃO DE TAGS E E-MAIL) ---
 async function procesarYGuardarUsuario(phone, userData) {
     try {
         console.log(`🔄 Procesando ${phone} (${userData.cpf_cnpj})...`);
@@ -203,7 +199,6 @@ async function procesarYGuardarUsuario(phone, userData) {
         try {
             token = await getAuthToken(userData.cpf_cnpj);
         } catch (e) {
-            // Falha na Auth geralmente é erro sistêmico ou usuário bloqueado
             console.error(`❌ Erro Auth para ${phone}`);
             const tag = "Transbordo - Usuário não identificado";
             await saveToCache(phone, userData.cpf_cnpj, {}, [], {}, tag, e.message);
@@ -220,8 +215,8 @@ async function procesarYGuardarUsuario(phone, userData) {
         if (!credoresData.credores?.length) {
             const tag = "Transbordo - Credor não encontrado";
             console.log(`⚠️ ${tag} para ${phone}`);
-            // Salva estado vazio com a tag de erro
-            await saveToCache(phone, userData.cpf_cnpj, credoresData, [], {}, tag, "API retornou lista de credores vazia");
+            // Guardamos con la etiqueta de transbordo para que el bot sepa qué hacer
+            await saveToCache(phone, userData.cpf_cnpj, credoresData, [], {}, tag, "Lista de credores vazia");
             await enviarReporteEmail(tag, { phone, ...userData });
             return true;
         }
@@ -246,8 +241,8 @@ async function procesarYGuardarUsuario(phone, userData) {
             return false;
         }
 
-        // Tag de sucesso parcial: IA - CPC (Conseguiu listar dívida)
-        let currentTag = "IA - CPC";
+        // Tag de sucesso parcial (Conseguiu listar dívida)
+        let currentTag = "IA - CPC"; 
 
         // 3. Simula Opciones
         let contratosDocs = [];
@@ -274,20 +269,21 @@ async function procesarYGuardarUsuario(phone, userData) {
             simulacionData = resSimulacion.data;
 
             if (!simulacionData.opcoesPagamento || simulacionData.opcoesPagamento.length === 0) {
+                // Si llegamos hasta aquí pero no hay opciones, es otro tipo de transbordo
                 currentTag = "Transbordo - Cliente sem opções de pagamento";
                 await enviarReporteEmail(currentTag, { phone, ...userData });
             }
 
         } catch (e) {
+            // Si falla la simulación, marcamos el error pero guardamos las deudas que ya obtuvimos
             currentTag = "Transbordo - Busca Opções de Pagamento - Erro";
             console.error(`❌ ${currentTag} para ${phone}`);
-            // Salvamos o que temos (dívidas) mas marcamos o erro na simulação
             await saveToCache(phone, userData.cpf_cnpj, credoresData, dividasData, {}, currentTag, e.message);
             await enviarReporteEmail(currentTag, { phone, ...userData }, e.message);
             return false;
         }
 
-        // 4. Salvar Sucesso (ou falha parcial de opções)
+        // 4. Guardar Éxito (o Transbordo de Opciones)
         await saveToCache(phone, userData.cpf_cnpj, credoresData, dividasData, simulacionData, currentTag);
         console.log(`✅ ${phone} processado com tag: ${currentTag}`);
         return true;
@@ -401,7 +397,7 @@ app.post('/api/chat-handler', async (req, res) => {
     }
 });
 
-// Lógica A: Buscar Credores (Com verificação de Tag de Erro)
+// Lógica A: Buscar Credores (Com verificação de Transbordo)
 async function logicBuscarCredores(req, res) {
     const { function_call_username } = req.body;
     let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
@@ -412,10 +408,10 @@ async function logicBuscarCredores(req, res) {
             return res.status(404).json({ error: "Usuario no sincronizado. Ejecute sync-database." });
         }
 
-        // VERIFICAÇÃO DE TRANSBORDO
+        // VERIFICAÇÃO DE TRANSBORDO / ERRO PRÉVIO
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
             const md_err = `⚠️ **Atenção:** Detectamos um problema com seu cadastro: **${cachedUser.last_tag}**.\n\nPor favor, aguarde enquanto transferimos para um atendente humano.`;
-            return responder(res, 200, "Transbordo Necessário", "Transbordo Necessário", { tag: cachedUser.last_tag }, md_err, md_err);
+            return responder(res, 200, "Transbordo Necessário", "Transbordo Necessário", { tag: cachedUser.last_tag, transbordo: true }, md_err, md_err);
         }
 
         const dividasData = JSON.parse(cachedUser.dividas_json);
@@ -436,7 +432,7 @@ async function logicBuscarCredores(req, res) {
             });
             md_pt += `Poderia explicar por que não pagou sua dívida?\n`; 
         } else {
-            // Caso raro onde a lista está vazia mas não deu erro na sync
+            // Caso raro onde não há erro explícito mas a lista está vazia
             md_es += "No se encontraron deudas."; md_pt += "Nenhuma dívida encontrada.";
         }
 
@@ -457,7 +453,7 @@ async function logicBuscarOpcoes(req, res) {
 
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
             const md_err = `⚠️ Não foi possível carregar as opções devido a um erro anterior (${cachedUser.last_tag}). Transferindo para humano...`;
-            return responder(res, 200, "Erro Opções", "Erro Opções", { tag: cachedUser.last_tag }, md_err, md_err);
+            return responder(res, 200, "Erro Opções", "Erro Opções", { tag: cachedUser.last_tag, transbordo: true }, md_err, md_err);
         }
 
         const simData = JSON.parse(cachedUser.simulacion_json);
@@ -525,10 +521,8 @@ async function logicEmitirBoleto(req, res) {
             }
         }
 
-        // Contexto Real (Tokens frescos)
         const ctx = await obtenerContextoDeudaReal(rawPhone);
 
-        // Re-simulação (Segurança para ID de transação)
         const bodySimulacion = {
             Crm: ctx.Crm,
             Carteira: ctx.Carteira,
@@ -548,7 +542,6 @@ async function logicEmitirBoleto(req, res) {
         
         let idParaEmitir = opcionFresca.codigo;
 
-        // Resumo Boleto (Se necessário)
         if (resReSimulacion.data.chamarResumoBoleto) {
             try {
                 const resResumo = await apiNegocie.post('/api/v5/resumo-boleto', {
@@ -567,7 +560,6 @@ async function logicEmitirBoleto(req, res) {
             }
         }
 
-        // Emissão Final
         const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', {
             Crm: ctx.Crm,
             Carteira: ctx.Carteira,
@@ -595,20 +587,23 @@ async function logicEmitirBoleto(req, res) {
                       `**Vencimento**: ${resEmision.data.vcto}\n` +
                       `**Código**: \`${resEmision.data.linhaDigitavel}\``;
 
-        // Sucesso Final: Atualiza tag
+        // TAG FINAL DE SUCESSO
         await saveToCache(rawPhone, ctx.cpf_cnpj, null, null, null, "IA - ACORDO");
         
         return responder(res, 201, "Boleto Emitido", "Boleto Gerado", resEmision.data, md_es, md_pt);
 
     } catch (error) {
-        // Captura falha na emissão REAL (se o bypass for removido)
+        // --- MANEJO DE ERRORES DE EMISIÓN ---
         const tag = "Transbordo - Erro emissão de boleto";
         console.error(`❌ ${tag} para ${rawPhone}`);
-        // Tenta pegar dados do usuário da memória simulada para o e-mail
         const userData = simulacionDB[rawPhone] || { phone: rawPhone };
+        
+        // Guardamos el error en BD y enviamos Email
+        await saveToCache(rawPhone, userData.cpf_cnpj, {}, [], {}, tag, error.message);
         await enviarReporteEmail(tag, userData, error.message);
         
-        return handleApiError(res, error, "Error al emitir", "Erro ao emitir");
+        const msgError = "Tivemos um problema técnico ao gerar seu boleto. Estou transferindo para um atendente humano finalizar.";
+        return responder(res, 500, "Erro Emissão", "Erro Emissão", { error: error.message, transbordo: true }, msgError, msgError);
     }
 }
 
