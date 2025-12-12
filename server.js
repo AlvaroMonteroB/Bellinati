@@ -5,7 +5,10 @@ const helmet = require('helmet');
 const axios = require('axios');
 const https = require('https');
 const dns = require('dns');
-const sqlite3 = require('sqlite3').verbose(); 
+const sqlite3 = require('sqlite3').verbose();
+const { exec } = require('child_process');
+const fs = require('fs');
+const nodemailer = require('nodemailer'); // 1. IMPORTAR NODEMAILER
 
 const app = express();
 app.use(express.json()); 
@@ -15,10 +18,72 @@ app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 
-// --- CONFIGURACIÓN DE BASE DE DATOS CACHÉ ---
+// --- CONFIGURAÇÃO DE E-MAIL (NODEMAILER) ---
+const transporter = nodemailer.createTransport({
+    service: process.env.EMAIL_SERVICE || 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
+
+// Helper para enviar e-mail de reporte/transbordo
+async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
+    const destinatario = process.env.EMAIL_DESTINATARIO;
+    
+    if (!process.env.EMAIL_USER || !destinatario) {
+        console.warn('⚠️ Credenciais de e-mail não configuradas. Reporte não enviado.');
+        return;
+    }
+
+    const htmlContent = `
+        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; border: 1px solid #ddd; padding: 20px;">
+            <h2 style="color: #d9534f;">🚨 Alerta de Transbordo / Erro</h2>
+            <p>O sistema detectou um cenário que requer atenção ou intervenção humana.</p>
+            
+            <div style="background-color: #f9f9f9; padding: 15px; margin-bottom: 20px; border-left: 5px solid #d9534f;">
+                <strong>TAG / CENÁRIO:</strong><br>
+                <span style="font-size: 18px; color: #d9534f;">${tag}</span>
+            </div>
+
+            <h3>👤 Dados do Cliente</h3>
+            <ul style="list-style: none; padding: 0;">
+                <li><strong>Telefone:</strong> ${dadosCliente.phone || 'N/A'}</li>
+                <li><strong>CPF:</strong> ${dadosCliente.cpf || 'N/A'}</li>
+                <li><strong>Nome (Simulado):</strong> ${dadosCliente.nome || 'N/A'}</li>
+            </ul>
+
+            ${erroDetalhe ? `
+            <h3>🛠️ Detalhes Técnicos</h3>
+            <pre style="background: #eee; padding: 10px; overflow-x: auto;">${erroDetalhe}</pre>
+            ` : ''}
+
+            <p style="font-size: 12px; color: #777; margin-top: 30px;">
+                Mensagem gerada automaticamente pelo Servidor de Negociação (IA).
+            </p>
+        </div>
+    `;
+
+    const mailOptions = {
+        from: `"Sistema Negociação IA" <${process.env.EMAIL_USER}>`,
+        to: destinatario,
+        subject: `[${tag}] - Cliente ${dadosCliente.phone}`,
+        html: htmlContent
+    };
+
+    try {
+        await transporter.sendMail(mailOptions);
+        console.log(`📧 E-mail de reporte enviado: ${tag} para ${destinatario}`);
+    } catch (error) {
+        console.error('❌ Falha ao enviar e-mail:', error.message);
+    }
+}
+
+// --- CONFIGURAÇÃO DE BASE DE DADOS CACHÉ ---
 const db = new sqlite3.Database('./cache_negociacion.db');
 
 db.serialize(() => {
+    // Adicionamos colunas last_tag e error_details
     db.run(`
         CREATE TABLE IF NOT EXISTS user_cache (
             phone TEXT PRIMARY KEY,
@@ -26,21 +91,33 @@ db.serialize(() => {
             credores_json TEXT,
             dividas_json TEXT,
             simulacion_json TEXT,
-            last_updated DATETIME
+            last_updated DATETIME,
+            last_tag TEXT,
+            error_details TEXT
         )
     `);
 });
 
-function saveToCache(phone, cpf, credores, dividas, simulacion) {
+// Helper para salvar estado no banco
+function saveToCache(phone, cpf, credores, dividas, simulacion, tag = "IA - ACORDO", errorDetails = null) {
     return new Promise((resolve, reject) => {
         const stmt = db.prepare(`
-            INSERT OR REPLACE INTO user_cache (phone, cpf, credores_json, dividas_json, simulacion_json, last_updated)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT OR REPLACE INTO user_cache (phone, cpf, credores_json, dividas_json, simulacion_json, last_updated, last_tag, error_details)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
         `);
-        stmt.run(phone, cpf, JSON.stringify(credores), JSON.stringify(dividas), JSON.stringify(simulacion), (err) => {
-            if (err) reject(err);
-            else resolve();
-        });
+        stmt.run(
+            phone, 
+            cpf, 
+            JSON.stringify(credores || {}), 
+            JSON.stringify(dividas || []), 
+            JSON.stringify(simulacion || {}), 
+            tag, 
+            errorDetails,
+            (err) => {
+                if (err) reject(err);
+                else resolve();
+            }
+        );
         stmt.finalize();
     });
 }
@@ -54,7 +131,7 @@ function getFromCache(phone) {
     });
 }
 
-// --- CONFIGURACIÓN AXIOS ---
+// --- CONFIGURAÇÃO AXIOS ---
 dns.setDefaultResultOrder('ipv4first');
 const apiAuth = axios.create({
     baseURL: 'https://bpdigital-api.bellinatiperez.com.br',
@@ -72,7 +149,6 @@ const apiNegocie = axios.create({
 
 apiNegocie.interceptors.response.use(response => response, error => Promise.reject(error));
 
-// --- DATOS DE USUARIOS (TU BASE MAESTRA) ---
 const simulacionDB = {
     "42154393888": { "cpf_cnpj": "42154393888", "nombre": "Alvaro Montero" },
     "98765432100": { "cpf_cnpj": "98765432100", "nombre": "Usuario de Prueba 2" },
@@ -91,7 +167,7 @@ const simulacionDB = {
     "+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
 };
 
-// --- LOGICA DE CONEXIÓN REAL ---
+// --- AUTH ---
 async function getAuthToken(cpf_cnpj) {
     const response = await apiAuth.post('/api/Login/v5/Authentication', {
         AppId: process.env.API_APP_ID,
@@ -101,123 +177,111 @@ async function getAuthToken(cpf_cnpj) {
     return response.data.token || response.data.access_token;
 }
 
-// Función de sincronización en segundo plano
+// --- FUNÇÃO DE SINCRONIZAÇÃO INTELIGENTE (COM GESTÃO DE ERROS E E-MAIL) ---
 async function procesarYGuardarUsuario(phone, userData) {
+    try {
+        console.log(`🔄 Procesando ${phone} (${userData.cpf_cnpj})...`);
+        
+        let token;
+        try {
+            token = await getAuthToken(userData.cpf_cnpj);
+        } catch (e) {
+            // Falha na Auth geralmente é erro sistêmico ou usuário bloqueado
+            console.error(`❌ Erro Auth para ${phone}`);
+            const tag = "Transbordo - Usuário não identificado";
+            await saveToCache(phone, userData.cpf_cnpj, {}, [], {}, tag, e.message);
+            await enviarReporteEmail(tag, { phone, ...userData }, e.message);
+            return false;
+        }
 
-try {
+        // 1. Busca Credores
+        const resCredores = await apiNegocie.get('/api/v5/busca-credores', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const credoresData = resCredores.data;
+        
+        if (!credoresData.credores?.length) {
+            const tag = "Transbordo - Credor não encontrado";
+            console.log(`⚠️ ${tag} para ${phone}`);
+            // Salva estado vazio com a tag de erro
+            await saveToCache(phone, userData.cpf_cnpj, credoresData, [], {}, tag, "API retornou lista de credores vazia");
+            await enviarReporteEmail(tag, { phone, ...userData });
+            return true;
+        }
 
-console.log(`🔄 Procesando ${phone} (${userData.cpf_cnpj})...`);
+        const credor = credoresData.credores[0];
+        const carteiraInfo = credor.carteiraCrms?.[0];
+        const carteiraId = carteiraInfo?.carteiraId || carteiraInfo?.id;
 
-const token = await getAuthToken(userData.cpf_cnpj);
+        // 2. Busca Deuda Detallada
+        let dividasData = [];
+        try {
+            const bodyDivida = { financeira: credor.financeira, crms: credor.crms };
+            const resDividas = await apiNegocie.post('/api/v5/busca-divida', bodyDivida, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            dividasData = resDividas.data;
+        } catch (e) {
+            const tag = "Transbordo - Listar dividas - Erro";
+            console.error(`❌ ${tag} para ${phone}`);
+            await saveToCache(phone, userData.cpf_cnpj, credoresData, [], {}, tag, e.message);
+            await enviarReporteEmail(tag, { phone, ...userData }, e.message);
+            return false;
+        }
 
+        // Tag de sucesso parcial: IA - CPC (Conseguiu listar dívida)
+        let currentTag = "IA - CPC";
 
-// 1. Busca Credores
+        // 3. Simula Opciones
+        let contratosDocs = [];
+        dividasData.forEach(d => d.contratos?.forEach(c => {
+            const numContrato = c.numero || c.documento;
+            if (numContrato) contratosDocs.push(String(numContrato));
+        }));
 
-const resCredores = await apiNegocie.get('/api/v5/busca-credores', {
+        let simulacionData = {};
+        try {
+            const bodySimulacion = {
+                Crm: credor.crms[0],
+                Carteira: carteiraId,
+                Contratos: contratosDocs,
+                DataVencimento: null, 
+                ValorEntrada: 0,
+                QuantidadeParcela: 0,
+                ValorParcela: 0
+            };
 
-headers: { 'Authorization': `Bearer ${token}` }
+            const resSimulacion = await apiNegocie.post('/api/v5/busca-opcao-pagamento', bodySimulacion, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            simulacionData = resSimulacion.data;
 
-});
+            if (!simulacionData.opcoesPagamento || simulacionData.opcoesPagamento.length === 0) {
+                currentTag = "Transbordo - Cliente sem opções de pagamento";
+                await enviarReporteEmail(currentTag, { phone, ...userData });
+            }
 
-const credoresData = resCredores.data;
+        } catch (e) {
+            currentTag = "Transbordo - Busca Opções de Pagamento - Erro";
+            console.error(`❌ ${currentTag} para ${phone}`);
+            // Salvamos o que temos (dívidas) mas marcamos o erro na simulação
+            await saveToCache(phone, userData.cpf_cnpj, credoresData, dividasData, {}, currentTag, e.message);
+            await enviarReporteEmail(currentTag, { phone, ...userData }, e.message);
+            return false;
+        }
 
-if (!credoresData.credores?.length) return console.log(`⚠️ ${phone} sin acreedores.`);
+        // 4. Salvar Sucesso (ou falha parcial de opções)
+        await saveToCache(phone, userData.cpf_cnpj, credoresData, dividasData, simulacionData, currentTag);
+        console.log(`✅ ${phone} processado com tag: ${currentTag}`);
+        return true;
 
-
-const credor = credoresData.credores[0];
-
-const carteiraInfo = credor.carteiraCrms?.[0];
-
-const carteiraId = carteiraInfo?.carteiraId || carteiraInfo?.id;
-
-
-// 2. Busca Deuda Detallada
-
-const bodyDivida = { financeira: credor.financeira, crms: credor.crms };
-
-const resDividas = await apiNegocie.post('/api/v5/busca-divida', bodyDivida, {
-
-headers: { 'Authorization': `Bearer ${token}` }
-
-});
-
-const dividasData = resDividas.data;
-
-
-// 3. Simula Opciones (Pre-calcula una oferta estándar)
-
-// Extraemos contratos para simulación
-
-let contratosDocs = [];
-
-dividasData.forEach(d => d.contratos?.forEach(c => contratosDocs.push(String(c.numero))));
-
-
-const bodySimulacion = {
-
-Crm: credor.crms[0],
-
-Carteira: carteiraId,
-
-Contratos: contratosDocs,
-
-DataVencimento: null, // Dejar que la API decida vencimiento por defecto
-
-ValorEntrada: 0,
-
-QuantidadeParcela: 0,
-
-ValorParcela: 0
-
-};
-
-
-const resSimulacion = await apiNegocie.post('/api/v5/busca-opcao-pagamento', bodySimulacion, {
-
-headers: { 'Authorization': `Bearer ${token}` }
-
-});
-
-const simulacionData = resSimulacion.data;
-
-
-// 4. GUARDAR EN CACHÉ (SQLITE)
-
-await saveToCache(phone, userData.cpf_cnpj, credoresData, dividasData, simulacionData);
-
-console.log(`✅ ${phone} guardado exitosamente.`);
-
-return true;
-
-
-} catch (error) {
-
-console.error(`❌ Error sincronizando ${phone}:`, error.message);
-
-return false;
-
-}
-
-}
-
-// ==========================================
-// 🚀 ENDPOINT ESPECIAL: SYNC DATABASE
-// ==========================================
-app.post('/api/admin/sync-database', async (req, res) => {
-    res.json({ status: "Iniciando sincronización en segundo plano..." });
-    console.log("--- INICIANDO SYNC MASIVO ---");
-    const phones = Object.keys(simulacionDB);
-    for (const phone of phones) {
-        await procesarYGuardarUsuario(phone, simulacionDB[phone]);
-        await new Promise(r => setTimeout(r, 1000));
+    } catch (error) {
+        console.error(`❌ Erro genérico processando ${phone}:`, error.message);
+        return false;
     }
-    console.log("--- SYNC MASIVO TERMINADO ---");
-});
+}
 
-
-
-// --- HELPER PARA OBTENER CONTEXTO REAL (TOKEN Y CRM) ---
-// Se usa para obtener credenciales frescas antes de emitir
+// --- HELPER CONTEXTO REAL ---
 async function obtenerContextoDeudaReal(rawPhone) {
     const userData = simulacionDB[rawPhone] || simulacionDB["+525510609610"]; 
     if (!userData) throw new Error("Usuario no encontrado en BD.");
@@ -239,18 +303,18 @@ async function obtenerContextoDeudaReal(rawPhone) {
     resDividas.data.forEach(d => {
         if (!fase && d.fase) fase = d.fase;
         d.contratos?.forEach(c => {
-            if (c.numero) contratosDocs.push(String(c.numero));
+            const numContrato = c.numero || c.documento;
+            if (numContrato) contratosDocs.push(String(numContrato));
         });
     });
 
-    return { token, cpf_cnpj: userData.cpf_cnpj, Crm: credor.crms[0], Carteira: carteiraId, fase, Contratos: contratosDocs };
+    return { token, cpf_cnpj: userData.cpf_cnpj, Crm: credor.crms[0], Carteira: carteiraId, fase, Contratos: contratosDocs, userData };
 }
 
-// --- HELPERS DE RESPUESTA ---
+// --- HELPERS ---
 const responder = (res, statusCode, titleES, titlePT, rawData, mdES, mdPT) => {
     const messageES = mdES || rawData.mensaje || 'Operación completada.';
     const messagePT = mdPT || rawData.mensajePT || messageES; 
-
     res.status(statusCode).json({
         raw: { status: statusCode >= 400 ? 'error' : 'exito', ...rawData },
         markdown: `**${titleES}**\n\n${messageES}`,
@@ -270,55 +334,57 @@ function handleApiError(res, error, titleES, titlePT) {
         mensajeES = error.response.data.msgRetorno || 'Error de la API de negociación.';
         mensajePT = error.response.data.msgRetorno || 'Erro na API de negociação.';
     }
-    
     responder(res, statusCode, titleES, titlePT, { error: error.message }, mensajeES, mensajePT);
 }
 
-// =========================================================================
-// 🚦 MAIN HANDLER / DISPATCHER
-// =========================================================================
+// ==========================================
+// 🛠️ ADMIN: LOGS PM2
+// ==========================================
+app.post('/api/admin/server-logs', (req, res) => {
+    const lines = req.body.lines || 50; 
+    exec('pm2 jlist', (err, stdout, stderr) => {
+        if (err) return res.status(500).json({ error: "Error PM2", details: stderr });
+        try {
+            const processes = JSON.parse(stdout);
+            const currentPmId = process.env.pm_id;
+            const targetProcess = processes.find(p => p.pm_id == currentPmId) || processes[0];
+            if (!targetProcess) return res.status(404).json({ error: "No PM2 process found." });
+
+            const outLogPath = targetProcess.pm2_env.pm_out_log_path;
+            const errLogPath = targetProcess.pm2_env.pm_err_log_path;
+            const command = `tail -n ${lines} "${outLogPath}" && echo "\n--- ERROR LOGS ---\n" && tail -n ${lines} "${errLogPath}"`;
+
+            exec(command, (readErr, readStdout, readStderr) => {
+                if (readErr) return res.status(500).json({ error: "Error reading logs", details: readStderr });
+                res.json({ logs: readStdout });
+            });
+        } catch (e) { res.status(500).json({ error: "Parse Error" }); }
+    });
+});
+
+// ==========================================
+// 🚦 DISPATCHER
+// ==========================================
 app.post('/api/chat-handler', async (req, res) => {
     try {
         const body = req.body;
-        console.log("📨 Payload:", JSON.stringify(body, null, 2));
+        console.log("📨 Payload:", JSON.stringify(body));
 
-        // 1. Identificación
-        if (body.cpf_cnpj) {
-            return await logicBuscarCredores(req, res);
-        }
-
-        // 2. Solicitud de Opciones (Lectura)
-        if (body.msg) {
-            return await logicBuscarOpcoes(req, res);
-        }
-
-        // 3. Solicitud de Resumo (Explícito)
-        if (body.accion === "resumo") {
-            return await logicResumoBoleto(req, res);
-        }
-
-        // 4. EMISIÓN POR SELECCIÓN (La nueva lógica 'opt')
-        // Si llega 'opt', sabemos que el usuario eligió una opción del menú
+        if (body.cpf_cnpj) return await logicBuscarCredores(req, res);
+        if (body.msg) return await logicBuscarOpcoes(req, res);
+        if (body.accion === "resumo") return await logicResumoBoleto(req, res);
         if (body.opt || body.accion === "emitir" || (body.Parcelas && body.DataVencimento)) {
-            console.log("➡️ Solicitud de Emisión");
             return await logicEmitirBoleto(req, res);
         }
 
-        console.warn("⚠️ Intención no clara.");
         return responder(res, 400, "Error", "Erro", {}, "No entendí tu solicitud.", "Não entendi.");
-
     } catch (error) {
         console.error("Error handler:", error);
         return handleApiError(res, error, "Error Interno", "Erro Interno");
     }
 });
 
-
-// =========================================================================
-// 🧠 LÓGICA DE NEGOCIO
-// =========================================================================
-
-// A. Buscar Credores (Caché)
+// Lógica A: Buscar Credores (Com verificação de Tag de Erro)
 async function logicBuscarCredores(req, res) {
     const { function_call_username } = req.body;
     let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
@@ -327,6 +393,12 @@ async function logicBuscarCredores(req, res) {
         const cachedUser = await getFromCache(rawPhone);
         if (!cachedUser) {
             return res.status(404).json({ error: "Usuario no sincronizado. Ejecute sync-database." });
+        }
+
+        // VERIFICAÇÃO DE TRANSBORDO
+        if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
+            const md_err = `⚠️ **Atenção:** Detectamos um problema com seu cadastro: **${cachedUser.last_tag}**.\n\nPor favor, aguarde enquanto transferimos para um atendente humano.`;
+            return responder(res, 200, "Transbordo Necessário", "Transbordo Necessário", { tag: cachedUser.last_tag }, md_err, md_err);
         }
 
         const dividasData = JSON.parse(cachedUser.dividas_json);
@@ -340,13 +412,14 @@ async function logicBuscarCredores(req, res) {
                 md_es += `### 💰 Deuda ${i + 1}: R$ ${deuda.valor}\n`;
                 md_pt += `### 💰 Dívida ${i + 1}: R$ ${deuda.valor}\n`;
                 deuda.contratos?.forEach(c => {
-                    md_es += `- Producto: ${c.produto}\n  - Días Atraso: ${c.diasAtraso}\n`;
-                    md_pt += `- Produto: ${c.produto}\n  - Dias Atraso: ${c.diasAtraso}\n`;
+                    md_es += `- Producto: ${c.produto}\n  - 📄 Contrato: ${c.numero || c.documento}\n  - 📅 **Días de Atraso:** ${c.diasAtraso}\n  - 💲 Valor Original: R$ ${c.valor}\n`;
+                    md_pt += `- Produto: ${c.produto}\n  - 📄 Contrato: ${c.numero || c.documento}\n  - 📅 **Dias de Atraso:** ${c.diasAtraso}\n  - 💲 Valor Original: R$ ${c.valor}\n`;
                 });
                 md_es += `\n`; md_pt += `\n`;
             });
             md_pt += `Poderia explicar por que não pagou sua dívida?\n`; 
         } else {
+            // Caso raro onde a lista está vazia mas não deu erro na sync
             md_es += "No se encontraron deudas."; md_pt += "Nenhuma dívida encontrada.";
         }
 
@@ -356,7 +429,7 @@ async function logicBuscarCredores(req, res) {
     }
 }
 
-// B. Buscar Opciones (Caché)
+// Lógica B: Buscar Opciones
 async function logicBuscarOpcoes(req, res) {
     const { function_call_username } = req.body;
     let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
@@ -365,14 +438,24 @@ async function logicBuscarOpcoes(req, res) {
         const cachedUser = await getFromCache(rawPhone);
         if (!cachedUser) return res.status(404).json({ error: "No data." });
 
+        if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
+            const md_err = `⚠️ Não foi possível carregar as opções devido a um erro anterior (${cachedUser.last_tag}). Transferindo para humano...`;
+            return responder(res, 200, "Erro Opções", "Erro Opções", { tag: cachedUser.last_tag }, md_err, md_err);
+        }
+
         const simData = JSON.parse(cachedUser.simulacion_json);
         let md_es = "Opciones de pago:\n\n";
         let md_pt = "Opções de pagamento:\n\n";
 
-        simData.opcoesPagamento?.forEach((op, idx) => {
-            md_es += `**Opción ${idx + 1}**: ${op.texto}\n- Total: R$ ${op.valorTotalComCustas || op.valor}\n\n`;
-            md_pt += `**Opção ${idx + 1}**: ${op.texto}\n- Total: R$ ${op.valorTotalComCustas || op.valor}\n\n`;
-        });
+        if (simData.opcoesPagamento) {
+            simData.opcoesPagamento.forEach((op, idx) => {
+                md_es += `**Opción ${idx + 1}**: ${op.texto}\n- Total: R$ ${op.valorTotalComCustas || op.valor}\n\n`;
+                md_pt += `**Opção ${idx + 1}**: ${op.texto}\n- Total: R$ ${op.valorTotalComCustas || op.valor}\n\n`;
+            });
+        } else {
+            md_es = "No hay opciones disponibles. Transferencia a humano requerida.";
+            md_pt = "Não há opções disponíveis. Transferência para humano necessária.";
+        }
 
         return responder(res, 200, "Opciones", "Opções", simData, md_es, md_pt);
     } catch (error) {
@@ -380,111 +463,139 @@ async function logicBuscarOpcoes(req, res) {
     }
 }
 
-// C. Resumo Boleto (Auxiliar)
 async function logicResumoBoleto(req, res) {
-    // ... (Este endpoint se mantiene por si se quiere llamar explícitamente, 
-    // pero la lógica principal ahora vive en Emitir) ...
-    // Se puede implementar similar a emitir si es necesario.
     return responder(res, 200, "Endpoint Auxiliar", "Auxiliar", { msg: "Use emitir con opt" });
 }
 
-// D. Emitir Boleto (INTELIGENTE: Basado en Selección 'opt')
+// D. Emitir Boleto (Real-time com Transbordo em Falha)
 async function logicEmitirBoleto(req, res) {
-    return responder(res, 200, "Ticket Generado", "Ticket Gerado", { status: "success" }, 
-    "Ticket generado con éxito. Nuestros agentes se pondrán en contacto contigo pronto.", 
-    "Ticket gerado com sucesso. Nossos agentes entrarão em contato em breve."
-);
-    const { function_call_username, opt, Parcelas } = req.body;
+    const { function_call_username, opt, Parcelas, DataVencimento } = req.body;
     
-    // Necesitamos 'opt' O bien 'Parcelas' manuales.
-    if (!opt && !Parcelas) return responder(res, 400, "Falta Opción", "Falta Opção", {}, "Selecciona una opción (ej: 1, 2).", "Selecione uma opção.");
+    // Validación básica
+    if (!opt && !Parcelas) return responder(res, 400, "Falta Opción", "Falta Opção", {}, "Selecciona una opción.", "Selecione uma opção.");
 
     let rawPhone = function_call_username.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
     try {
-        // 1. OBTENER CONTEXTO TÉCNICO (Credenciales frescas)
-        const ctx = await obtenerContextoDeudaReal(rawPhone);
+        console.log(`🚀 Iniciando emisión REAL para ${rawPhone}...`);
 
-        let idFinal = "";
-        let valorFinal = 0;
-        let parcelasFinal = 0;
-        let dataVencFinal = "";
+        // 1. RECUPERAR DATOS DE LA OPCIÓN ELEGIDA (Desde Caché)
+        // Necesitamos saber qué eligió el usuario (valor, fecha, parcelas) para replicarlo en la llamada real.
+        const cachedUser = await getFromCache(rawPhone);
+        if (!cachedUser || !cachedUser.simulacion_json) {
+            return responder(res, 400, "Sesión Caducada", "Sessão Expirada", {}, "Por favor, pide ver las opciones de nuevo.", "Solicite as opções novamente.");
+        }
+        
+        const simulacionData = JSON.parse(cachedUser.simulacion_json);
+        const opciones = simulacionData.opcoesPagamento || [];
+        
+        let parcelasFinal, dataVencFinal, valorFinal;
+        let usarResumo = simulacionData.chamarResumoBoleto; // Dato importante de la simulación original
+        let codigoOpcaoOriginal = ""; // El código que devolvió la simulación para esa opción
 
-        // 2. RECUPERAR OPCIÓN SELECCIONADA
         if (opt) {
-            // A. Recuperar simulación de la CACHÉ (Lo que vio el usuario)
-            const cachedUser = await getFromCache(rawPhone);
-            if (!cachedUser || !cachedUser.simulacion_json) {
-                return responder(res, 400, "Sesión Caducada", "Sessão Expirada", {}, "Por favor, pide ver las opciones de nuevo.", "Solicite as opções novamente.");
-            }
-            
-            const simulacionData = JSON.parse(cachedUser.simulacion_json);
-            const opciones = simulacionData.opcoesPagamento || [];
-            
-            // Validar índice (Asumimos que el usuario envía "1" para el índice 0)
             const index = parseInt(opt) - 1;
             if (index < 0 || index >= opciones.length) {
-                return responder(res, 400, "Opción Inválida", "Opção Inválida", {}, "Esa opción no existe.", "Essa opção não existe.");
+                return responder(res, 400, "Opción Inválida", "Opção Inválida", {}, "Opção inexistente.", "Opção inexistente.");
             }
-
             const opcionElegida = opciones[index];
             console.log(`✅ Usuario eligió opción ${opt}:`, opcionElegida.texto);
-
-            // B. Preparar datos base
-            idFinal = opcionElegida.codigo;
-            valorFinal = opcionElegida.valor;
+            
             parcelasFinal = opcionElegida.qtdParcelas;
             dataVencFinal = opcionElegida.dataVencimento;
-
-            // C. VERIFICAR SI REQUIERE 'RESUMO BOLETO' (Usando la bandera de la simulación guardada)
-            if (simulacionData.chamarResumoBoleto === true) {
-                console.log("🔄 La opción requiere paso intermedio (Resumo). Ejecutando...");
-                
-                try {
-                    const resResumo = await apiNegocie.post('/api/v5/resumo-boleto', {
-                        Crm: ctx.Crm,
-                        CodigoCarteira: ctx.Carteira,
-                        CNPJ_CPF: ctx.cpf_cnpj,
-                        Contrato: ctx.Contratos[0], // Contrato principal
-                        CodigoOpcao: opcionElegida.codigo // El código de la opción seleccionada
-                    }, { headers: { 'Authorization': `Bearer ${ctx.token}` } });
-
-                    // Si devuelve ID nuevo, lo usamos. Si es 204 o vacío, mantenemos el original.
-                    if (resResumo.data && resResumo.data.identificador) {
-                        idFinal = resResumo.data.identificador;
-                        console.log("✅ ID actualizado por Resumo Boleto.");
-                    }
-                } catch (errResumo) {
-                    console.warn("⚠️ Error en Resumo Boleto (o 204), intentando emitir con ID original:", errResumo.message);
-                    // Continuamos con idFinal original
-                }
-            }
-
+            valorFinal = opcionElegida.valor;
+            codigoOpcaoOriginal = opcionElegida.codigo;
         } else {
-            // Fallback: Si enviaron 'Parcelas' manuales en vez de 'opt' (comportamiento antiguo)
-            // Aquí tendrías que re-simular. Por brevedad, asumimos el flujo 'opt' es el principal ahora.
-            return responder(res, 400, "Use 'opt'", "Use 'opt'", {}, "Por favor selecciona por número de opción.", "Selecione pelo número da opção.");
+            // Caso legacy (si envían parcelas manuales), intentamos buscar la opción correspondiente
+            parcelasFinal = Parcelas;
+            dataVencFinal = DataVencimento; // Ojo: esto podría no coincidir exacto si no se valida
+            const op = opciones.find(o => o.qtdParcelas == Parcelas);
+            if(op) {
+                valorFinal = op.valor;
+                codigoOpcaoOriginal = op.codigo;
+            } else {
+                return responder(res, 400, "Opción no encontrada", "Opção não encontrada", {}, "No encontré esa cantidad de parcelas.", "Quantidade de parcelas inválida.");
+            }
         }
 
-        // 3. EMITIR BOLETO FINAL
-        console.log(`🚀 Emitiendo boleto... ID: ${idFinal}, Valor: ${valorFinal}`);
-        payload={Crm: ctx.Crm,
+        // 2. OBTENER CONTEXTO TÉCNICO FRESCO (Credenciales + IDs reales)
+        // Re-ejecutamos Auth -> Credores -> Divida para tener tokens y IDs de contrato vigentes.
+        const ctx = await obtenerContextoDeudaReal(rawPhone);
+
+        // 3. (OPCIONAL) RE-SIMULAR PARA OBTENER 'CODIGO' FRESCO
+        // A veces el 'codigo' de la opción caduca. Lo ideal es re-simular con los mismos parámetros para obtener uno nuevo.
+        // Pero si confiamos en el de la caché reciente, podemos intentar usar 'codigoOpcaoOriginal'.
+        // Para máxima seguridad, re-simulamos:
+        console.log("🔄 Re-simulando para obtener ID de transacción fresco...");
+        const bodySimulacion = {
+            Crm: ctx.Crm,
+            Carteira: ctx.Carteira,
+            Contratos: ctx.Contratos,
+            DataVencimento: null, 
+            ValorEntrada: 0,
+            QuantidadeParcela: parcelasFinal, // Filtramos para que la API (si soporta) nos de directo o buscamos
+            ValorParcela: 0
+        };
+        // Nota: Si la API no soporta filtrar por parcelas en el request, traerá todas y buscaremos.
+        
+        const resReSimulacion = await apiNegocie.post('/api/v5/busca-opcao-pagamento', bodySimulacion, {
+            headers: { 'Authorization': `Bearer ${ctx.token}` }
+        });
+        
+        const opcionFresca = resReSimulacion.data.opcoesPagamento?.find(o => o.qtdParcelas == parcelasFinal);
+        if (!opcionFresca) {
+            throw new Error("Al re-simular, la opción ya no está disponible.");
+        }
+        
+        let idParaEmitir = opcionFresca.codigo;
+
+        // 4. PASO INTERMEDIO: RESUMO BOLETO (Si se requiere)
+        if (resReSimulacion.data.chamarResumoBoleto) {
+            console.log("⚠️ API pide Resumo Boleto. Ejecutando...");
+            try {
+                const resResumo = await apiNegocie.post('/api/v5/resumo-boleto', {
+                    Crm: ctx.Crm,
+                    CodigoCarteira: ctx.Carteira,
+                    CNPJ_CPF: ctx.cpf_cnpj,
+                    Contrato: ctx.Contratos[0], // Usamos el primer contrato principal
+                    CodigoOpcao: idParaEmitir
+                }, { headers: { 'Authorization': `Bearer ${ctx.token}` } });
+
+                if (resResumo.data && resResumo.data.sucesso && resResumo.data.identificador) {
+                    idParaEmitir = resResumo.data.identificador; // ACTUALIZAMOS EL ID
+                    console.log("✅ ID actualizado por Resumo Boleto.");
+                } else {
+                    console.warn("⚠️ Resumo Boleto no devolvió identificador. Intentando con el original...");
+                }
+            } catch (errResumo) {
+                console.error("❌ Error en Resumo Boleto:", errResumo.message);
+                // Decisión de diseño: ¿Fallamos o intentamos emitir igual?
+                // Si es crítico, lanzamos error y vamos a transbordo.
+                throw new Error(`Falha no passo Resumo Boleto: ${errResumo.message}`);
+            }
+        }
+
+        // 5. EMISIÓN REAL
+        console.log(`🚀 Enviando petición final de EMISIÓN... ID: ${idParaEmitir}`);
+        const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', {
+            Crm: ctx.Crm,
             Carteira: ctx.Carteira,
             CNPJ_CPF: ctx.cpf_cnpj,
             fase: ctx.fase,
             Contrato: ctx.Contratos[0],
             Valor: valorFinal,
             Parcelas: parcelasFinal,
-            DataVencimento: dataVencFinal,
-            Identificador: idFinal,
-            TipoContrato: null};
-            console.log(payload);
-        
-        const resEmision = await apiNegocie.post('/api/v5/emitir-boleto', {
-            payload
+            DataVencimento: dataVencFinal, // Usar la fecha de la opción (que ya viene validada)
+            Identificador: idParaEmitir,
+            TipoContrato: null
         }, { headers: { 'Authorization': `Bearer ${ctx.token}` } });
 
-        // 4. RESPUESTA FINAL BILINGÜE
+        // VALIDACIÓN DE RESPUESTA DE ÉXITO
+        if (!resEmision.data || !resEmision.data.sucesso || !resEmision.data.linhaDigitavel) {
+            throw new Error("A API retornou sucesso:false ou dados de boleto incompletos.");
+        }
+
+        // 6. RESPUESTA DE ÉXITO
         const md_es = `¡Listo! Boleto generado con éxito.\n\n` +
                       `**Valor**: R$ ${resEmision.data.valorTotal}\n` +
                       `**Vencimiento**: ${resEmision.data.vcto}\n` +
@@ -497,14 +608,30 @@ async function logicEmitirBoleto(req, res) {
                       `**Código de Barras**: \`${resEmision.data.linhaDigitavel}\`\n\n` +
                       `Copie o código para pagar no seu aplicativo bancário.`;
 
+        // Guardar tag de sucesso final
+        await saveToCache(rawPhone, ctx.cpf_cnpj, null, null, null, "IA - ACORDO");
+        
         return responder(res, 201, "Boleto Emitido", "Boleto Gerado", resEmision.data, md_es, md_pt);
 
     } catch (error) {
-        return handleApiError(res, error, "Error al emitir", "Erro ao emitir");
+        // --- TRANSBORDO EN CASO DE ERROR ---
+        const tag = "Transbordo - Erro emissão de boleto";
+        console.error(`❌ ${tag} para ${rawPhone}:`, error.message);
+        
+        // Recuperar datos de usuario para el reporte (intentamos de caché o simulacionDB)
+        const cachedUser = await getFromCache(rawPhone);
+        const userData = cachedUser ? { phone: rawPhone, cpf: cachedUser.cpf } : (simulacionDB[rawPhone] || { phone: rawPhone });
+        
+        // Registrar error en BD y enviar mail
+        await saveToCache(rawPhone, userData.cpf, {}, [], {}, tag, error.message);
+        await enviarReporteEmail(tag, userData, error.message);
+        
+        // Respuesta amigable al bot para que transfiera
+        const msgError = "Tivemos um problema técnico ao gerar seu boleto. Estou transferindo para um atendente humano finalizar.";
+        return responder(res, 500, "Erro Emissão", "Erro Emissão", { error: error.message, transbordo: true }, msgError, msgError);
     }
 }
 
-// Endpoint Admin
 app.post('/api/admin/sync-database', async (req, res) => {
     res.json({ status: "Sync started" });
     const phones = Object.keys(simulacionDB);

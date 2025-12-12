@@ -138,3 +138,4 @@ dotenv.env
 .env
 .env
 cache_negociacion.db
+aux.js
