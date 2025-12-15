@@ -50,7 +50,7 @@ async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
             <ul style="list-style: none; padding: 0;">
                 <li><strong>Telefone:</strong> ${dadosCliente.phone || 'N/A'}</li>
                 <li><strong>CPF:</strong> ${dadosCliente.cpf || 'N/A'}</li>
-                <li><strong>Nome (Simulado):</strong> ${dadosCliente.nome || 'N/A'}</li>
+                <li><strong>Nome :</strong> ${dadosCliente.nome || 'N/A'}</li>
             </ul>
 
             ${erroDetalhe ? `
@@ -296,7 +296,7 @@ async function procesarYGuardarUsuario(phone, userData) {
 
 // --- HELPER CONTEXTO REAL ---
 async function obtenerContextoDeudaReal(rawPhone) {
-    const userData = simulacionDB[rawPhone] || simulacionDB["+525510609610"]; 
+    const userData = simulacionDB[rawPhone]; 
     if (!userData) throw new Error("Usuario no encontrado en BD.");
     
     const token = await getAuthToken(userData.cpf_cnpj);
@@ -389,6 +389,15 @@ app.post('/api/chat-handler', async (req, res) => {
         if (body.opt || body.accion === "emitir" || (body.Parcelas && body.DataVencimento)) {
             return await logicEmitirBoleto(req, res);
         }
+        if(body.tag) {
+            tag=body.tag
+            var data = new Object();
+            data.phone=body.function_call_username.split("--").pop()
+            aux=simulacionDB[data.phone]
+            data.nome=aux.nombre
+            return await enviarReporteEmail(body.tag,data)
+        }
+
 
         return responder(res, 400, "Error", "Erro", {}, "No entendí tu solicitud.", "Não entendi.");
     } catch (error) {
