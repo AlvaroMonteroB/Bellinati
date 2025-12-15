@@ -37,12 +37,10 @@ function handleApiError(res, error, titleES, titlePT, extraData = {}) {
 }
 
 // --- 2. CONFIGURACIÓN EMAIL ---
-const transporter = nodemailer.createTransport({
-    service: process.env.EMAIL_SERVICE || 'gmail',
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-});
+
 
 async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
+
     const destinatario = process.env.EMAIL_DESTINATARIO;
     if (!process.env.EMAIL_USER || !destinatario) return;
 
@@ -62,6 +60,10 @@ async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
                 Este correo se envió porque el usuario intentó interactuar con el bot y tiene un estado de bloqueo.
             </p>
         </div>`;
+        const transporter = nodemailer.createTransport({
+    service: process.env.EMAIL_SERVICE || 'gmail',
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+    });
 
     try {
         await transporter.sendMail({
