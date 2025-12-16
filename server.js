@@ -26,42 +26,52 @@ const HOST = '0.0.0.0';
 // ==========================================
 
 // Configuración de Autenticación
+const SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'Hoja 1'; // Nombre de la pestaña
+const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
+const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
+
+// Configuración de Autenticación (JWT para Service Accounts)
 const serviceAccountAuth = new JWT({
-    email: process.env.GOOGLE_CLIENT_EMAIL,
-    key: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : '',
+    email: GOOGLE_CLIENT_EMAIL,
+    key: GOOGLE_PRIVATE_KEY ? GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : '',
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
+// ==========================================
+// 📝 FUNCIÓN UPDATE SHEETS
+// ==========================================
 async function updateGoogleSheet(phone, tag) {
-    if (!process.env.GOOGLE_SHEET_ID || !process.env.GOOGLE_CLIENT_EMAIL) return;
+    // Validación de seguridad
+    if (!SHEET_ID || !GOOGLE_CLIENT_EMAIL) {
+        console.error("⚠️ Faltan variables de entorno para Google Sheets.");
+        return;
+    }
 
     try {
-        const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID, serviceAccountAuth);
+        // 1. Inicializar el documento con el ID constante
+        const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
+        
+        // 2. Cargar info
         await doc.loadInfo();
-        const sheet = doc.sheetsByIndex[0]; // Usamos la primera pestaña
+        
+        // 3. Seleccionar la hoja por NOMBRE (Estilo tu otro proyecto)
+        const sheet = doc.sheetsByTitle[SHEET_NAME]; 
 
-        // Definición de Columnas (Headers)
-        const headers = [
-            "Numero",
-            "Tag Confirmação CPF",
-            "Tag lista dívida",
-            "Tag IA - CPC",
-            "Tag Opções de Pagamento",
-            "Tag Formalizar Acordo",
-            "Tag Erro - API",
-            "Tag Transbordo"
-        ];
+        if (!sheet) {
+            console.error(`❌ No se encontró la hoja con nombre: "${SHEET_NAME}"`);
+            return;
+        }
 
-        // Mapeo: Qué columna marcar según el Tag recibido
+        // --- MAPEO DE COLUMNAS ---
         let columnToMark = null;
-        let valueToWrite = "✅"; // Por defecto ponemos paloma
+        let valueToWrite = "✅"; 
 
-        // 1. Lógica de Transbordos (Prioridad)
+        // Definimos la lógica de qué columna llenar
         if (tag.toLowerCase().includes("transbordo")) {
             columnToMark = "Tag Transbordo";
-            valueToWrite = tag; // Escribimos el nombre del error
+            valueToWrite = tag; 
         } 
-        // 2. Lógica de Flujo Normal
         else if (tag === "Tag lista dívida") columnToMark = "Tag lista dívida";
         else if (tag === "IA - CPC" || tag === "Tag IA - CPC") columnToMark = "Tag IA - CPC";
         else if (tag === "Tag Opções de Pagamento") columnToMark = "Tag Opções de Pagamento";
@@ -72,27 +82,29 @@ async function updateGoogleSheet(phone, tag) {
         }
         else if (tag === "Tag Confirmação CPF") columnToMark = "Tag Confirmação CPF";
 
-        if (!columnToMark) return; // Si el tag no está en nuestra lista, no hacemos nada
+        if (!columnToMark) return; // Si el tag no es relevante, salimos
 
-        // Buscar fila existente por número
+        // --- LÓGICA DE ESCRITURA ---
         const rows = await sheet.getRows();
-        let targetRow = rows.find(row => row.get('Numero') == phone);
+        
+        // Buscamos si ya existe el teléfono
+        const targetRow = rows.find(row => String(row.get('Numero')) === String(phone));
 
         if (targetRow) {
-            // Actualizamos la fila existente
-            targetRow.set(columnToMark, valueToWrite);
+            // ACTUALIZAR (Usando assign para librería v4)
+            targetRow.assign({ [columnToMark]: valueToWrite });
             await targetRow.save();
-            console.log(`📊 Sheet Update: ${phone} -> [${columnToMark}: ${valueToWrite}] (Updated)`);
+            console.log(`📊 Sheet: ${phone} -> [${columnToMark}: ${valueToWrite}] (Actualizado)`);
         } else {
-            // Creamos nueva fila
+            // CREAR NUEVO
             const newRowData = { "Numero": phone };
             newRowData[columnToMark] = valueToWrite;
             await sheet.addRow(newRowData);
-            console.log(`📊 Sheet Update: ${phone} -> [${columnToMark}: ${valueToWrite}] (New Row)`);
+            console.log(`📊 Sheet: ${phone} -> [${columnToMark}: ${valueToWrite}] (Nuevo)`);
         }
 
     } catch (error) {
-        console.error("❌ Error actualizando Google Sheet:", error.message);
+        console.error("❌ Error Google Sheets:", error.message);
     }
 }
 
