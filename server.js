@@ -274,7 +274,7 @@ app.post('/api/transbordo', async (req, res) => {
 
 // 2. ENDPOINT BUSCAR CREDORES COMPLETOS (Deudas + Opciones)
 app.post('/api/consultar-ofertas', async (req, res) => {
-    const { function_call_username } = req.body;
+    const { function_call_username,cpf_cnpj } = req.body;
     const rawPhone = function_call_username?.includes("--")
         ? function_call_username.split("--").pop()
         : function_call_username;
@@ -284,6 +284,9 @@ app.post('/api/consultar-ofertas', async (req, res) => {
 
         if (!cachedUser) {
             return responder(res, 404, "Sin Datos", "Sem Dados", {}, "Usuario no sincronizado.", "Usuário não sincronizado.");
+        }
+        if(!cachedUser.cpf_cnpj==cpf_cnpj){
+            return responder(res,"Introduce el cpf correcto","cpf incorreto",{},"El cpf no corresponde con el numero de telefono","O CPF não corresponde ao número de telefone.");
         }
 
         // Verificar bloqueo antes de dar info
