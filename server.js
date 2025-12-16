@@ -285,7 +285,7 @@ app.post('/api/consultar-ofertas', async (req, res) => {
         if (!cachedUser) {
             return responder(res, 404, "Sin Datos", "Sem Dados", {}, "Usuario no sincronizado.", "Usuário não sincronizado.");
         }
-        if(!cachedUser.cpf_cnpj==cpf_cnpj){
+        if(cachedUser.cpf_cnpj!=cpf_cnpj){
             return responder(res,"Introduce el cpf correcto","cpf incorreto",{},"El cpf no corresponde con el numero de telefono","O CPF não corresponde ao número de telefone.");
         }
 
