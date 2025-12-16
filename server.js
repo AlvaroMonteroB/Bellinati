@@ -129,6 +129,7 @@ const simulacionDB = {
     "04065282330": { "cpf_cnpj": "04065282330", "nombre": "Usuario Test 040" },
     "09241820918": { "cpf_cnpj": "09241820918", "nombre": "Usuario Test 092" },
     "63618955308": { "cpf_cnpj": "63618955308", "nombre": "Usuario Test 636" },
+    "29103077861": {"cpf_cnpj" : "29103077861", "nombre": "Usuario test 1337"},
     "+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
 };
 
