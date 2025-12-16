@@ -282,6 +282,8 @@ app.post('/api/consultar-ofertas', async (req, res) => {
 
         // Verificar bloqueo antes de dar info
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
+            console.log("Reporte email")
+             await enviarReporteEmail(rawPhone,cachedUser.last_tag, userData, cachedUser.error_details)
             return responder(res, 200, "Bloqueo", "Bloqueio", { transbordo: true, tag: cachedUser.last_tag },
                 `⚠️ Transbordo requerido: ${cachedUser.last_tag}`, `⚠️ Transbordo necessário: ${cachedUser.last_tag}`);
         }
@@ -309,6 +311,7 @@ app.post('/api/emitir-boleto', async (req, res) => {
 
         // Verificar bloqueo
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
+            console.log("Reporte email")
              await enviarReporteEmail(rawPhone,cachedUser.last_tag, userData, cachedUser.error_details)
              return responder(res, 200, "Bloqueo", "Bloqueio", { transbordo: true }, "Transbordo requerido.", "Transbordo necessário.");
         }
