@@ -62,7 +62,9 @@ async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
         
 
     try {
+        console.log("Sending email")
         await autoMailer.post("send-email",{to:destinatario,subject:`[TRANSBORDO] ${tag} - ${dadosCliente.phone}`,text:"",html:htmlContent})
+        
     } catch (e) { console.error('Error enviando email:', e.message); }
 }
 
