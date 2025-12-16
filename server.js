@@ -37,13 +37,13 @@ function handleApiError(res, error, titleES, titlePT, extraData = {}) {
 }
 
 // --- 2. CONFIGURACIÓN EMAIL ---
-async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
+async function enviarReporteEmail(raw_phone,tag, dadosCliente, erroDetalhe = null) {
 
     const destinatario = process.env.EMAIL_DESTINATARIO;
     if (!process.env.EMAIL_USER || !destinatario) return;
 
     // Evitar spam si no hay datos claros
-    if (!dadosCliente) dadosCliente = { nombre: 'Desconocido', phone: 'N/A', cpf_cnpj: 'N/A' };
+    if (!dadosCliente) dadosCliente = { nombre: raw_phone, phone: 'N/A', cpf_cnpj: 'N/A' };
 
     console.log(`📧 ENVIANDO REPORTE AHORA (Interacción Detectada): [${tag}]`);
 
@@ -51,7 +51,7 @@ async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
         <div style="border: 1px solid #d9534f; padding: 20px; font-family: sans-serif;">
             <h2 style="color: #d9534f;">🚨 Transbordo Solicitado: ${tag}</h2>
             <p><strong>Cliente:</strong> ${dadosCliente.nombre || 'N/A'}</p>
-            <p><strong>Teléfono:</strong> ${dadosCliente.phone || 'N/A'}</p>
+            <p><strong>Teléfono:</strong> ${raw_phone || 'N/A'}</p>
             <p><strong>CPF:</strong> ${dadosCliente.cpf_cnpj || 'N/A'}</p>
 
             ${erroDetalhe ? `<div style="background:#eee;padding:10px;margin-top:10px;"><strong>Detalle Técnico:</strong><br>${erroDetalhe}</div>` : ''}
@@ -229,7 +229,7 @@ app.post('/api/transbordo', async (req, res) => {
         if (tag) {
             if (tag.toLowerCase().includes("transbordo")) {
                 //Reporte
-                await enviarReporteEmail(tag, userData);
+                await enviarReporteEmail(rawPhone,tag, userData);
             }
             return responder(res, 200, "Transferencia solicitada", "Transbordo obrigatório", { received: true, tag }, "Tag procesada.", "Sua solicitação está em espera. Agradecemos sua atenção.");
         }
@@ -246,7 +246,7 @@ app.post('/api/transbordo', async (req, res) => {
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
             
             //Reporte
-             await enviarReporteEmail(cachedUser.last_tag, userData, cachedUser.error_details);
+             await enviarReporteEmail(rawPhone,cachedUser.last_tag, userData, cachedUser.error_details);
 
             const msgES = `⚠️ He detectado un problema con tu cuenta: **${cachedUser.last_tag}**. He notificado a un asesor humano.`;
             const msgPT = `⚠️ Detectei uma pendência no seu cadastro: **${cachedUser.last_tag}**. Já notifiquei um atendente humano.`;
@@ -429,7 +429,7 @@ async function logicEmitirBoleto(req, res, phone, cachedUser, userData) {
         const tag = "Transbordo - Erro emissão de boleto";
         
         //reporte
-        await enviarReporteEmail(tag, userData, error.message);
+        await enviarReporteEmail(phone,tag, userData, error.message);
         await saveToCache(phone, userData.cpf_cnpj, {}, [], {}, tag, error.message);
 
         const errES = "Hubo un error técnico generando el boleto. He notificado al equipo.";
