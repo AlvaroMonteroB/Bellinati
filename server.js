@@ -309,7 +309,7 @@ app.post('/api/emitir-boleto', async (req, res) => {
 
         // Verificar bloqueo
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
-             
+             await enviarReporteEmail(rawPhone,cachedUser.last_tag, userData, cachedUser.error_details)
              return responder(res, 200, "Bloqueo", "Bloqueio", { transbordo: true }, "Transbordo requerido.", "Transbordo necessário.");
         }
 
