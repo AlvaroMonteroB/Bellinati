@@ -230,7 +230,8 @@ app.post('/api/chat-handler', async (req, res) => {
     // A. Registro de Tag Manual (Reporte directo)
     if (body.tag) {
         if (body.tag.toLowerCase().includes("transbordo")) {
-            await enviarReporteEmail(body.tag, userData);
+            //Reporte
+            //await enviarReporteEmail(body.tag, userData);
         }
         return responder(res, 200, "Tag Registrada", "Tag Registrada", { received: true }, "Tag procesada.", "Tag processada.");
     }
@@ -249,7 +250,8 @@ app.post('/api/chat-handler', async (req, res) => {
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
             
             // 1. Enviar Email AHORA (Interacción Real)
-            await enviarReporteEmail(cachedUser.last_tag, userData, cachedUser.error_details);
+            //Reporte
+           // await enviarReporteEmail(cachedUser.last_tag, userData, cachedUser.error_details);
 
             // 2. Bloquear Bot
             const msgES = `⚠️ He detectado un problema con tu cuenta: **${cachedUser.last_tag}**. He notificado a un asesor humano para que te atienda.`;
@@ -397,7 +399,8 @@ async function logicEmitirBoleto(req, res, phone, cachedUser, userData) {
     } catch (error) {
         // ERROR DE EMISIÓN EN TIEMPO REAL: Se envía Email
         const tag = "Transbordo - Erro emissão de boleto";
-        await enviarReporteEmail(tag, userData, error.message);
+        //reporte
+        //await enviarReporteEmail(tag, userData, error.message);
         await saveToCache(phone, userData.cpf_cnpj, {}, [], {}, tag, error.message);
         
         const errES = "Hubo un error técnico generando el boleto. He notificado al equipo.";
