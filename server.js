@@ -60,21 +60,9 @@ async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
             </p>
         </div>`;
         
-    const transporter = nodemailer.createTransport({
-        service: process.env.EMAIL_SERVICE || 'gmail',
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
-        },
-    });
 
     try {
-        await transporter.sendMail({
-            from: `"Bot Cobrança" <${process.env.EMAIL_USER}>`,
-            to: destinatario,
-            subject: `[TRANSBORDO] ${tag} - ${dadosCliente.phone}`,
-            html: htmlContent
-        });
+        await autoMailer.post("send-email",{to:destinatario,subject:`[TRANSBORDO] ${tag} - ${dadosCliente.phone}`,text:"",html:htmlContent})
     } catch (e) { console.error('Error enviando email:', e.message); }
 }
 
@@ -112,7 +100,7 @@ dns.setDefaultResultOrder('ipv4first');
 const httpsAgent = new https.Agent({ keepAlive: true, rejectUnauthorized: true });
 const apiAuth = axios.create({ baseURL: 'https://bpdigital-api.bellinatiperez.com.br', timeout: 30000, httpsAgent });
 const apiNegocie = axios.create({ baseURL: 'https://api-negocie.bellinati.com.br', timeout: 30000, httpsAgent });
-
+const autoMailer=axios.create({baseURL:"https://auto-mailer-delta.vercel.app/",timeout:30000},httpsAgent)
 // --- 5. SIMULACIÓN DB ---
 const simulacionDB = {
     "42154393888": { "cpf_cnpj": "42154393888", "nombre": "Alvaro Montero" },
@@ -239,7 +227,7 @@ app.post('/api/transbordo', async (req, res) => {
         if (tag) {
             if (tag.toLowerCase().includes("transbordo")) {
                 //Reporte
-                //await enviarReporteEmail(tag, userData);
+                await enviarReporteEmail(tag, userData);
             }
             return responder(res, 200, "Transferencia solicitada", "Transbordo obrigatório", { received: true, tag }, "Tag procesada.", "Sua solicitação está em espera. Agradecemos sua atenção.");
         }
@@ -256,7 +244,7 @@ app.post('/api/transbordo', async (req, res) => {
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
             
             //Reporte
-            // await enviarReporteEmail(cachedUser.last_tag, userData, cachedUser.error_details);
+             await enviarReporteEmail(cachedUser.last_tag, userData, cachedUser.error_details);
 
             const msgES = `⚠️ He detectado un problema con tu cuenta: **${cachedUser.last_tag}**. He notificado a un asesor humano.`;
             const msgPT = `⚠️ Detectei uma pendência no seu cadastro: **${cachedUser.last_tag}**. Já notifiquei um atendente humano.`;
@@ -366,8 +354,8 @@ async function logicBuscarCredoresCompletos(res, cachedUser) {
         mdES += `\n**Para formalizar, responde con el número de la opción (ej: "Opción 1").**`;
         mdPT += `\n**Para formalizar, responda com o número da opção (ex: "Opção 1").**`;
     } else if (dividas.length > 0) {
-        mdES += `\n⚠️ No encontré ofertas automáticas. Un asesor te ayudará.`;
-        mdPT += `\n⚠️ Não encontrei ofertas automáticas. Um atendente irá auxiliar.`;
+        mdES += `\n⚠️ No encontré ofertas. Un asesor te ayudará.`;
+        mdPT += `\n⚠️ Não encontrei ofertas. Um atendente irá auxiliar.`;
     }
 
     responder(res, 200, "Estado de Cuenta y Opciones", "Extrato e Opções",
@@ -439,7 +427,7 @@ async function logicEmitirBoleto(req, res, phone, cachedUser, userData) {
         const tag = "Transbordo - Erro emissão de boleto";
         
         //reporte
-        //await enviarReporteEmail(tag, userData, error.message);
+        await enviarReporteEmail(tag, userData, error.message);
         await saveToCache(phone, userData.cpf_cnpj, {}, [], {}, tag, error.message);
 
         const errES = "Hubo un error técnico generando el boleto. He notificado al equipo.";
