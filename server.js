@@ -21,7 +21,7 @@ const HOST = '0.0.0.0';
 // --- 1. HELPER RESPONDER ---
 const responder = (res, statusCode, titleES, titlePT, rawData, mdES, mdPT) => {
     const messageES = mdES || rawData.mensaje || 'Operación completada.';
-    const messagePT = mdPT || rawData.mensajePT || messageES; 
+    const messagePT = mdPT || rawData.mensajePT || messageES;
     res.status(statusCode).json({
         raw: { status: statusCode >= 400 ? 'error' : 'exito', ...rawData },
         markdown: `**${titleES}**\n\n${messageES}`,
@@ -37,8 +37,6 @@ function handleApiError(res, error, titleES, titlePT, extraData = {}) {
 }
 
 // --- 2. CONFIGURACIÓN EMAIL ---
-
-
 async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
 
     const destinatario = process.env.EMAIL_DESTINATARIO;
@@ -55,17 +53,20 @@ async function enviarReporteEmail(tag, dadosCliente, erroDetalhe = null) {
             <p><strong>Cliente:</strong> ${dadosCliente.nombre || 'N/A'}</p>
             <p><strong>Teléfono:</strong> ${dadosCliente.phone || 'N/A'}</p>
             <p><strong>CPF:</strong> ${dadosCliente.cpf_cnpj || 'N/A'}</p>
+
             ${erroDetalhe ? `<div style="background:#eee;padding:10px;margin-top:10px;"><strong>Detalle Técnico:</strong><br>${erroDetalhe}</div>` : ''}
             <p style="color: #777; font-size: 12px; margin-top: 20px;">
                 Este correo se envió porque el usuario intentó interactuar con el bot y tiene un estado de bloqueo.
             </p>
         </div>`;
-        const transporter = nodemailer.createTransport({
-            service: process.env.EMAIL_SERVICE || 'gmail',
-            auth: { 
-                user: process.env.EMAIL_USER, 
-                pass: process.env.EMAIL_PASS, },
-            });
+        
+    const transporter = nodemailer.createTransport({
+        service: process.env.EMAIL_SERVICE || 'gmail',
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS,
+        },
+    });
 
     try {
         await transporter.sendMail({
@@ -84,7 +85,7 @@ db.serialize(() => {
     db.run("PRAGMA journal_mode = WAL;");
     db.run("PRAGMA synchronous = NORMAL;");
     db.run(`CREATE TABLE IF NOT EXISTS user_cache (
-        phone TEXT PRIMARY KEY, cpf TEXT, credores_json TEXT, dividas_json TEXT, 
+        phone TEXT PRIMARY KEY, cpf TEXT, credores_json TEXT, dividas_json TEXT,
         simulacion_json TEXT, last_updated DATETIME, last_tag TEXT, error_details TEXT
     )`);
 });
@@ -94,8 +95,8 @@ function saveToCache(phone, cpf, credores, dividas, simulacion, tag, errorDetail
         const stmt = db.prepare(`INSERT OR REPLACE INTO user_cache 
             (phone, cpf, credores_json, dividas_json, simulacion_json, last_updated, last_tag, error_details)
             VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`);
-        stmt.run(phone, cpf, JSON.stringify(credores||{}), JSON.stringify(dividas||[]), 
-                 JSON.stringify(simulacion||{}), tag, errorDetails, (err) => err ? reject(err) : resolve());
+        stmt.run(phone, cpf, JSON.stringify(credores || {}), JSON.stringify(dividas || []),
+            JSON.stringify(simulacion || {}), tag, errorDetails, (err) => err ? reject(err) : resolve());
         stmt.finalize();
     });
 }
@@ -142,7 +143,7 @@ async function getAuthToken(cpf_cnpj) {
 async function procesarYGuardarUsuario(phone, userData) {
     try {
         console.log(`🔄 Syncing ${phone}...`);
-        
+
         let token;
         try {
             token = await getAuthToken(userData.cpf_cnpj);
@@ -155,9 +156,9 @@ async function procesarYGuardarUsuario(phone, userData) {
 
         // 1. Busca Credores
         const resCredores = await apiNegocie.get('/api/v5/busca-credores', { headers: { 'Authorization': `Bearer ${token}` } });
-        
+
         if (!resCredores.data.credores?.length) {
-            const tag = "Transbordo - Credor não encontrado"; 
+            const tag = "Transbordo - Credor não encontrado";
             await saveToCache(phone, userData.cpf_cnpj, resCredores.data, [], {}, tag);
             // NO ENVIAMOS EMAIL AQUI
             return true;
@@ -170,8 +171,8 @@ async function procesarYGuardarUsuario(phone, userData) {
         // 2. Busca Dívida
         let dividasData = [];
         try {
-            const resDividas = await apiNegocie.post('/api/v5/busca-divida', 
-                { financeira: credor.financeira, crms: credor.crms }, 
+            const resDividas = await apiNegocie.post('/api/v5/busca-divida',
+                { financeira: credor.financeira, crms: credor.crms },
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             dividasData = resDividas.data;
@@ -195,13 +196,13 @@ async function procesarYGuardarUsuario(phone, userData) {
                 Crm: credor.crms[0], Carteira: carteiraId, Contratos: contratosDocs,
                 DataVencimento: null, ValorEntrada: 0, QuantidadeParcela: 0, ValorParcela: 0
             }, { headers: { 'Authorization': `Bearer ${token}` } });
-            
+
             simulacionData = resSimul.data;
             if (!simulacionData.opcoesPagamento?.length) {
                 currentTag = "Transbordo - Cliente sem opções de pagamento";
                 // NO EMAIL
             } else {
-                currentTag = "Tag Opções de Pagamento"; 
+                currentTag = "Tag Opções de Pagamento";
             }
         } catch (e) {
             currentTag = "Transbordo - Busca Opções de Pagamento - Erro";
@@ -218,64 +219,116 @@ async function procesarYGuardarUsuario(phone, userData) {
     }
 }
 
-// --- 7. CHAT HANDLER (AQUÍ SE ENVÍA EL EMAIL) ---
-app.post('/api/chat-handler', async (req, res) => {
-    const body = req.body;
-    const rawPhone = body.function_call_username?.includes("--") 
-        ? body.function_call_username.split("--").pop() 
-        : body.function_call_username;
+// ==========================================
+// 🚦 NUEVOS ENDPOINTS SEPARADOS
+// ==========================================
+
+// 1. ENDPOINT TRANSBORDO & TAGS
+// Maneja registro de tags manuales Y verifica si el usuario está bloqueado
+app.post('/api/transbordo', async (req, res) => {
+    const { tag, function_call_username } = req.body;
+    const rawPhone = function_call_username?.includes("--")
+        ? function_call_username.split("--").pop()
+        : function_call_username;
 
     const userData = simulacionDB[rawPhone] || { phone: rawPhone, nombre: "Desconhecido" };
 
-    // A. Registro de Tag Manual (Reporte directo)
-    if (body.tag) {
-        if (body.tag.toLowerCase().includes("transbordo")) {
-            //Reporte
-            //await enviarReporteEmail(body.tag, userData);
+    try {
+        // A. Si viene un tag en el body, es un registro manual (ej: "Transbordo - Recusa acordo")
+        if (tag) {
+            if (tag.toLowerCase().includes("transbordo")) {
+                //Reporte
+                //await enviarReporteEmail(tag, userData);
+            }
+            return responder(res, 200, "Tag Registrada", "Tag Registrada", { received: true, tag }, "Tag procesada.", "Tag processada.");
         }
-        return responder(res, 200, "Tag Registrada", "Tag Registrada", { received: true }, "Tag procesada.", "Tag processada.");
+
+        // B. Si no viene tag, verificamos el estado del usuario en Cache
+        const cachedUser = await getFromCache(rawPhone);
+
+        if (!cachedUser) {
+            return responder(res, 404, "Usuario No Encontrado", "Usuário Não Encontrado", {},
+                "Tus datos no están sincronizados.", "Seus dados não estão sincronizados.");
+        }
+
+        // Si hay tag de bloqueo
+        if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
+            
+            //Reporte
+            // await enviarReporteEmail(cachedUser.last_tag, userData, cachedUser.error_details);
+
+            const msgES = `⚠️ He detectado un problema con tu cuenta: **${cachedUser.last_tag}**. He notificado a un asesor humano.`;
+            const msgPT = `⚠️ Detectei uma pendência no seu cadastro: **${cachedUser.last_tag}**. Já notifiquei um atendente humano.`;
+
+            return responder(res, 200, "Transbordo Requerido", "Transbordo Necessário",
+                { transbordo: true, tag: cachedUser.last_tag }, msgES, msgPT);
+        }
+
+        // Si está limpio
+        return responder(res, 200, "Estado Normal", "Estado Normal", { transbordo: false }, "Usuario sin bloqueos.", "Usuário sem bloqueios.");
+
+    } catch (e) {
+        handleApiError(res, e, "Error Transbordo", "Erro Transbordo");
     }
+});
+
+// 2. ENDPOINT BUSCAR CREDORES COMPLETOS (Deudas + Opciones)
+app.post('/api/consultar-ofertas', async (req, res) => {
+    const { function_call_username } = req.body;
+    const rawPhone = function_call_username?.includes("--")
+        ? function_call_username.split("--").pop()
+        : function_call_username;
 
     try {
         const cachedUser = await getFromCache(rawPhone);
 
-        // B. Verificación de Transbordo (BLOQUEO + ENVIO DE EMAIL)
         if (!cachedUser) {
-            return responder(res, 404, "Usuario No Encontrado", "Usuário Não Encontrado", {}, 
-                "Tus datos no están sincronizados. Contacta soporte.", "Seus dados não estão sincronizados.");
+            return responder(res, 404, "Sin Datos", "Sem Dados", {}, "Usuario no sincronizado.", "Usuário não sincronizado.");
         }
 
-        // --- AQUÍ OCURRE LA MAGIA ---
-        // Si hay un TAG de Transbordo guardado desde el sync, AHORA enviamos el email.
+        // Verificar bloqueo antes de dar info
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
-            
-            // 1. Enviar Email AHORA (Interacción Real)
-            //Reporte
-           // await enviarReporteEmail(cachedUser.last_tag, userData, cachedUser.error_details);
-
-            // 2. Bloquear Bot
-            const msgES = `⚠️ He detectado un problema con tu cuenta: **${cachedUser.last_tag}**. He notificado a un asesor humano para que te atienda.`;
-            const msgPT = `⚠️ Detectei uma pendência no seu cadastro: **${cachedUser.last_tag}**. Já notifiquei um atendente humano.`;
-            
-            return responder(res, 200, "Transbordo Requerido", "Transbordo Necessário", 
-                { transbordo: true, tag: cachedUser.last_tag }, msgES, msgPT);
+            return responder(res, 200, "Bloqueo", "Bloqueio", { transbordo: true, tag: cachedUser.last_tag },
+                `⚠️ Transbordo requerido: ${cachedUser.last_tag}`, `⚠️ Transbordo necessário: ${cachedUser.last_tag}`);
         }
 
-        // C. Lógica de Negocio (Solo si no hay Transbordo)
-        if (body.cpf_cnpj) return await logicBuscarCredoresCompletos(res, cachedUser);
-        if (body.msg) return await logicBuscarOpcoes(res, cachedUser);
-        if (body.opt || (body.Parcelas && body.DataVencimento)) {
-            return await logicEmitirBoleto(req, res, rawPhone, cachedUser, userData);
-        }
-
-        responder(res, 400, "Comando Desconocido", "Comando Desconhecido", {}, "No entendí la solicitud.", "Não entendi a solicitação.");
+        // Ejecutar lógica completa
+        await logicBuscarCredoresCompletos(res, cachedUser);
 
     } catch (e) {
-        handleApiError(res, e, "Error General", "Erro Geral");
+        handleApiError(res, e, "Error Consultar Ofertas", "Erro Consultar Ofertas");
     }
 });
 
-// --- LÓGICA A: Deudas + Opciones ---
+// 3. ENDPOINT EMITIR BOLETO
+app.post('/api/emitir-boleto', async (req, res) => {
+    const { function_call_username, opt, Parcelas } = req.body;
+    const rawPhone = function_call_username?.includes("--")
+        ? function_call_username.split("--").pop()
+        : function_call_username;
+
+    const userData = simulacionDB[rawPhone] || { phone: rawPhone, nombre: "Desconhecido" };
+
+    try {
+        const cachedUser = await getFromCache(rawPhone);
+        if (!cachedUser) return responder(res, 404, "Sin Datos", "Sem Dados", {}, "Error datos.", "Erro dados.");
+
+        // Verificar bloqueo
+        if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
+             
+             return responder(res, 200, "Bloqueo", "Bloqueio", { transbordo: true }, "Transbordo requerido.", "Transbordo necessário.");
+        }
+
+        await logicEmitirBoleto(req, res, rawPhone, cachedUser, userData);
+
+    } catch (e) {
+        handleApiError(res, e, "Error Boleto", "Erro Boleto");
+    }
+});
+
+// --- LOGICA INTERNA (Separada para ser llamada por los endpoints) ---
+
+// LÓGICA A: Deudas + Opciones
 async function logicBuscarCredoresCompletos(res, cachedUser) {
     const dividas = JSON.parse(cachedUser.dividas_json || '[]');
     const sim = JSON.parse(cachedUser.simulacion_json || '{}');
@@ -302,8 +355,8 @@ async function logicBuscarCredoresCompletos(res, cachedUser) {
         mdPT += `### 💳 Opções de Pagamento Disponíveis:\n\n`;
         opcoes.forEach((op, i) => {
             const val = op.valorTotalComCustas || op.valor;
-            const lineES = `🔹 **Opción ${i+1}:** ${op.texto}\n   (Total a pagar: R$ ${val})\n\n`;
-            const linePT = `🔹 **Opção ${i+1}:** ${op.texto}\n   (Total a pagar: R$ ${val})\n\n`;
+            const lineES = `🔹 **Opción ${i + 1}:** ${op.texto}\n   (Total a pagar: R$ ${val})\n\n`;
+            const linePT = `🔹 **Opção ${i + 1}:** ${op.texto}\n   (Total a pagar: R$ ${val})\n\n`;
             mdES += lineES; mdPT += linePT;
         });
         mdES += `\n**Para formalizar, responde con el número de la opción (ej: "Opción 1").**`;
@@ -313,37 +366,17 @@ async function logicBuscarCredoresCompletos(res, cachedUser) {
         mdPT += `\n⚠️ Não encontrei ofertas automáticas. Um atendente irá auxiliar.`;
     }
 
-    responder(res, 200, "Estado de Cuenta y Opciones", "Extrato e Opções", 
+    responder(res, 200, "Estado de Cuenta y Opciones", "Extrato e Opções",
         { dividas, opcoes, total_deudas: dividas.length }, mdES, mdPT);
 }
 
-// --- LÓGICA B: Recordatorio ---
-async function logicBuscarOpcoes(res, cachedUser) {
-    const sim = JSON.parse(cachedUser.simulacion_json || '{}');
-    const opcoes = sim.opcoesPagamento || [];
-
-    if (opcoes.length === 0) {
-        return responder(res, 200, "Sin Opciones", "Sem Opções", { transbordo: true }, 
-            "No hay opciones automáticas.", "Não há opções automáticas.");
-    }
-
-    let mdES = `**Recordatorio de Opciones:**\n\n`;
-    let mdPT = `**Lembrete de Opções:**\n\n`;
-    opcoes.forEach((op, i) => {
-        const val = op.valorTotalComCustas || op.valor;
-        mdES += `🔹 **Opción ${i+1}:** ${op.texto} (Total: R$ ${val})\n`;
-        mdPT += `🔹 **Opção ${i+1}:** ${op.texto} (Total: R$ ${val})\n`;
-    });
-    responder(res, 200, "Opciones Disponibles", "Opções Disponíveis", { opciones }, mdES, mdPT);
-}
-
-// --- LÓGICA C: Emisión (LIVE) ---
+// LÓGICA B: Emisión (LIVE)
 async function logicEmitirBoleto(req, res, phone, cachedUser, userData) {
     const { opt, Parcelas } = req.body;
     try {
         const simCache = JSON.parse(cachedUser.simulacion_json);
         const opcoes = simCache.opcoesPagamento || [];
-        
+
         let targetOp;
         if (opt) {
             const idx = parseInt(opt) - 1;
@@ -391,6 +424,7 @@ async function logicEmitirBoleto(req, res, phone, cachedUser, userData) {
 
         await saveToCache(phone, userData.cpf_cnpj, {}, [], {}, "BOT_BOLETO_GERADO");
         const boleto = resEmitir.data;
+
         const mdES = `✅ **¡Acuerdo Exitoso!**\n\n📄 Código: \`${boleto.linhaDigitavel}\`\n💰 Valor: R$ ${boleto.valorTotal}\n📅 Vence: ${boleto.vcto}`;
         const mdPT = `✅ **Acordo Realizado!**\n\n📄 Linha Digitável: \`${boleto.linhaDigitavel}\`\n💰 Valor: R$ ${boleto.valorTotal}\n📅 Vencimento: ${boleto.vcto}`;
 
@@ -399,10 +433,11 @@ async function logicEmitirBoleto(req, res, phone, cachedUser, userData) {
     } catch (error) {
         // ERROR DE EMISIÓN EN TIEMPO REAL: Se envía Email
         const tag = "Transbordo - Erro emissão de boleto";
+        
         //reporte
         //await enviarReporteEmail(tag, userData, error.message);
         await saveToCache(phone, userData.cpf_cnpj, {}, [], {}, tag, error.message);
-        
+
         const errES = "Hubo un error técnico generando el boleto. He notificado al equipo.";
         const errPT = "Houve um erro técnico ao gerar o boleto. Equipe notificada.";
         responder(res, 500, "Error Emisión", "Erro Emissão", { transbordo: true, tag }, errES, errPT);
@@ -412,7 +447,7 @@ async function logicEmitirBoleto(req, res, phone, cachedUser, userData) {
 // --- 8. SYNC BATCH OPTIMIZADO (Sin email) ---
 app.post('/api/admin/sync', async (req, res) => {
     const phones = Object.keys(simulacionDB);
-    const BATCH_SIZE = 5; 
+    const BATCH_SIZE = 5;
     console.log(`🚀 Sync Optimizado (${phones.length} usuarios)`);
     res.json({ msg: "Sync iniciado", total: phones.length });
 
