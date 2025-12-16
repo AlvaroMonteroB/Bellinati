@@ -42,6 +42,7 @@ const serviceAccountAuth = new JWT({
 // 📝 FUNCIÓN UPDATE SHEETS
 // ==========================================
 async function updateGoogleSheet(phone, tag) {
+    console.log("Actualizando google sheets")
     // Validación de seguridad
     if (!SHEET_ID || !GOOGLE_CLIENT_EMAIL) {
         console.error("⚠️ Faltan variables de entorno para Google Sheets.");
