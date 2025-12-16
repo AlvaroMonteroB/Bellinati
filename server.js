@@ -27,7 +27,7 @@ const HOST = '0.0.0.0';
 
 // Configuración de Autenticación
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'Hoja 1'; // Nombre de la pestaña
+const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'TAGS'; // Nombre de la pestaña
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 
@@ -42,33 +42,33 @@ const serviceAccountAuth = new JWT({
 // 📝 FUNCIÓN UPDATE SHEETS
 // ==========================================
 async function updateGoogleSheet(phone, tag) {
-    console.log("Actualizando google sheets")
-    // Validación de seguridad
+    console.log(`🔍 [Sheet Debug] Iniciando update para: ${phone} | Tag: ${tag}`);
+
     if (!SHEET_ID || !GOOGLE_CLIENT_EMAIL) {
-        console.error("⚠️ Faltan variables de entorno para Google Sheets.");
+        console.error("⚠️ [Sheet Debug] Faltan credenciales en .env");
         return;
     }
 
     try {
-        // 1. Inicializar el documento con el ID constante
         const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
-        
-        // 2. Cargar info
         await doc.loadInfo();
         
-        // 3. Seleccionar la hoja por NOMBRE (Estilo tu otro proyecto)
-        const sheet = doc.sheetsByTitle[SHEET_NAME]; 
-
+        // 1. Verificar si la hoja existe
+        const sheet = doc.sheetsByTitle[SHEET_NAME];
         if (!sheet) {
-            console.error(`❌ No se encontró la hoja con nombre: "${SHEET_NAME}"`);
+            console.error(`❌ [Sheet Debug] NO encuentro la hoja llamada "${SHEET_NAME}".`);
+            console.log(`👉 [Sheet Debug] Las hojas disponibles son: ${doc.sheetsByIndex.map(s => s.title).join(', ')}`);
             return;
         }
 
-        // --- MAPEO DE COLUMNAS ---
+        // 2. Verificar Headers (Columnas)
+        await sheet.loadHeaderRow(); // Cargar fila 1 explícitamente
+        const headersEnExcel = sheet.headerValues;
+        
+        // Mapeo de columnas
         let columnToMark = null;
         let valueToWrite = "✅"; 
 
-        // Definimos la lógica de qué columna llenar
         if (tag.toLowerCase().includes("transbordo")) {
             columnToMark = "Tag Transbordo";
             valueToWrite = tag; 
@@ -83,29 +83,35 @@ async function updateGoogleSheet(phone, tag) {
         }
         else if (tag === "Tag Confirmação CPF") columnToMark = "Tag Confirmação CPF";
 
-        if (!columnToMark) return; // Si el tag no es relevante, salimos
+        if (!columnToMark) {
+            console.log(`ℹ️ [Sheet Debug] El tag "${tag}" no corresponde a ninguna columna configurada.`);
+            return;
+        }
 
-        // --- LÓGICA DE ESCRITURA ---
+        // 3. Verificar si la columna existe en el Excel
+        if (!headersEnExcel.includes(columnToMark)) {
+            console.error(`❌ [Sheet Debug] La columna "${columnToMark}" NO EXISTE en el Excel.`);
+            console.log(`👉 [Sheet Debug] Columnas encontradas: ${headersEnExcel.join(' | ')}`);
+            return;
+        }
+
         const rows = await sheet.getRows();
-        
-        // Buscamos si ya existe el teléfono
         const targetRow = rows.find(row => String(row.get('Numero')) === String(phone));
 
         if (targetRow) {
-            // ACTUALIZAR (Usando assign para librería v4)
             targetRow.assign({ [columnToMark]: valueToWrite });
             await targetRow.save();
-            console.log(`📊 Sheet: ${phone} -> [${columnToMark}: ${valueToWrite}] (Actualizado)`);
+            console.log(`✅ [Sheet Debug] Fila ACTUALIZADA para ${phone}`);
         } else {
-            // CREAR NUEVO
             const newRowData = { "Numero": phone };
             newRowData[columnToMark] = valueToWrite;
             await sheet.addRow(newRowData);
-            console.log(`📊 Sheet: ${phone} -> [${columnToMark}: ${valueToWrite}] (Nuevo)`);
+            console.log(`✅ [Sheet Debug] Fila CREADA para ${phone}`);
         }
 
     } catch (error) {
-        console.error("❌ Error Google Sheets:", error.message);
+        console.error("❌ [Sheet Debug] Error CRÍTICO:", error.message);
+        if (error.message.includes("403")) console.error("👉 Revisa que el Service Account sea EDITOR.");
     }
 }
 
