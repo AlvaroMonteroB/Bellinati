@@ -241,7 +241,7 @@ app.post('/api/transbordo', async (req, res) => {
                 //Reporte
                 //await enviarReporteEmail(tag, userData);
             }
-            return responder(res, 200, "Tag Registrada", "Tag Registrada", { received: true, tag }, "Tag procesada.", "Tag processada.");
+            return responder(res, 200, "Transferencia solicitada", "Transbordo obrigatório", { received: true, tag }, "Tag procesada.", "Sua solicitação está em espera. Agradecemos sua atenção.");
         }
 
         // B. Si no viene tag, verificamos el estado del usuario en Cache
