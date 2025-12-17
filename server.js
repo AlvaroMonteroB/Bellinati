@@ -213,7 +213,16 @@ const autoMailer = axios.create({ baseURL: "https://auto-mailer-delta.vercel.app
 
 
 "+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
-
+"788324039": { "cpf_cnpj": "788324039", "nombre": "Usuario Test 1" },
+  "357155106": { "cpf_cnpj": "357155106", "nombre": "Usuario Test 2" },
+  "432206906": { "cpf_cnpj": "432206906", "nombre": "Usuario Test 3" },
+  "1012234983": { "cpf_cnpj": "1012234983", "nombre": "Usuario Test 4" },
+  "489302610": { "cpf_cnpj": "489302610", "nombre": "Usuario Test 5" },
+  "1751211509": { "cpf_cnpj": "1751211509", "nombre": "Usuario Test 6" },
+  "2505540543": { "cpf_cnpj": "2505540543", "nombre": "Usuario Test 7" },
+  "3266177797": { "cpf_cnpj": "3266177797", "nombre": "Usuario Test 8" },
+  "4957486921": { "cpf_cnpj": "4957486921", "nombre": "Usuario Test 9" },
+  "7651663721": { "cpf_cnpj": "7651663721", "nombre": "Usuario Test 10" }
 
 }; 
 
