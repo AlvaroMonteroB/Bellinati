@@ -164,12 +164,58 @@ const apiNegocie = axios.create({ baseURL: 'https://api-negocie.bellinati.com.br
 const autoMailer = axios.create({ baseURL: "https://auto-mailer-delta.vercel.app/", timeout: 30000 }, httpsAgent);
 
 // Simulación DB (Tu lista de usuarios para Sync masivo)
-const simulacionDB = {
-    "42154393888": { "cpf_cnpj": "42154393888", "nombre": "Alvaro Montero" },
-    "98765432100": { "cpf_cnpj": "98765432100", "nombre": "Usuario de Prueba 2" },
-    "+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
-    // ... Agrega el resto de tu lista aquí
-};
+ const simulacionDB = {
+
+
+"42154393888": { "cpf_cnpj": "42154393888", "nombre": "Alvaro Montero" },
+
+
+"98765432100": { "cpf_cnpj": "98765432100", "nombre": "Usuario de Prueba 2" },
+
+
+"02604738554": { "cpf_cnpj": "02604738554", "nombre": "Alvaro Montero" },
+
+
+"06212643342": { "cpf_cnpj": "06212643342", "nombre": "Usuario Test 062" },
+
+
+"52116745888": { "cpf_cnpj": "52116745888", "nombre": "Usuario Test 521" },
+
+
+"12144201684": { "cpf_cnpj": "12144201684", "nombre": "Usuario Test 121" },
+
+
+"46483299885": { "cpf_cnpj": "46483299885", "nombre": "Usuario Test 464" },
+
+
+"26776559856": { "cpf_cnpj": "26776559856", "nombre": "Usuario Test 267" },
+
+
+"04513675020": { "cpf_cnpj": "04513675020", "nombre": "Usuario Test 045" },
+
+
+"06430897052": { "cpf_cnpj": "06430897052", "nombre": "Usuario Test 064" },
+
+
+"10173421997": { "cpf_cnpj": "10173421997", "nombre": "Usuario Test 101" },
+
+
+"04065282330": { "cpf_cnpj": "04065282330", "nombre": "Usuario Test 040" },
+
+
+"09241820918": { "cpf_cnpj": "09241820918", "nombre": "Usuario Test 092" },
+
+
+"63618955308": { "cpf_cnpj": "63618955308", "nombre": "Usuario Test 636" },
+
+
+"29103077861": {"cpf_cnpj" : "29103077861", "nombre": "Usuario test 1337"},
+
+
+"+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
+
+
+}; 
 
 // Helper de Respuesta
 const responder = (res, statusCode, titleES, titlePT, rawData, mdES, mdPT) => {
