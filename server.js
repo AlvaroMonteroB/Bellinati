@@ -447,6 +447,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             if (!simulacionData.opcoesPagamento?.length) {
                 currentTag = "Transbordo - Cliente sem opções de pagamento";
                 await enviarReporteEmail(phone, currentTag, { cpf_cnpj });
+                return responder(res,500, "Sin opciones de pago", currentTag, {},"Cliente sin opciones", "Cliente sem opções de pagamento")
             }
         } catch (e) {
             currentTag = "Transbordo - Busca Opções de Pagamento - Erro";
