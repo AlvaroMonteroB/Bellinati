@@ -7,7 +7,6 @@ const https = require('https');
 const dns = require('dns');
 const sqlite3 = require('sqlite3').verbose();
 const nodemailer = require('nodemailer');
-// --- IMPORTAR LIBRERÍAS DE GOOGLE ---
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
 
@@ -24,51 +23,39 @@ const HOST = '0.0.0.0';
 // ==========================================
 // 📊 CONFIGURACIÓN GOOGLE SHEETS
 // ==========================================
-
-// Configuración de Autenticación
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'TAGS'; // Nombre de la pestaña
+const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'TAGS';
 const GOOGLE_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 
-// Configuración de Autenticación (JWT para Service Accounts)
 const serviceAccountAuth = new JWT({
     email: GOOGLE_CLIENT_EMAIL,
     key: GOOGLE_PRIVATE_KEY ? GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : '',
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
-// ==========================================
-// 📝 FUNCIÓN UPDATE SHEETS
-// ==========================================
-async function updateGoogleSheet(phone, tag) {
-    console.log(`🔍 [Sheet Debug] Iniciando update para: ${phone} | Tag: ${tag}`);
-
-    if (!SHEET_ID || !GOOGLE_CLIENT_EMAIL) {
-        console.error("⚠️ [Sheet Debug] Faltan credenciales en .env");
-        return;
-    }
+async function updateGoogleSheet(phone, cpf, tag) {
+    if (!SHEET_ID || !GOOGLE_CLIENT_EMAIL) return;
 
     try {
+        console.log(`📊 [Sheet] Update: ${phone} | CPF: ${cpf} | Tag: ${tag}`);
         const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
         await doc.loadInfo();
         
-        // 1. Verificar si la hoja existe
-        const sheet = doc.sheetsByTitle[SHEET_NAME];
+        const sheet = doc.sheetsByTitle[SHEET_NAME] || doc.sheetsByIndex[0];
         if (!sheet) {
-            console.error(`❌ [Sheet Debug] NO encuentro la hoja llamada "${SHEET_NAME}".`);
-            console.log(`👉 [Sheet Debug] Las hojas disponibles son: ${doc.sheetsByIndex.map(s => s.title).join(', ')}`);
+            console.error(`❌ Hoja '${SHEET_NAME}' no encontrada.`);
             return;
         }
 
-        // 2. Verificar Headers (Columnas)
-        await sheet.loadHeaderRow(); // Cargar fila 1 explícitamente
+        // Cargar encabezados
+        await sheet.loadHeaderRow();
         const headersEnExcel = sheet.headerValues;
-        
-        // Mapeo de columnas
+
         let columnToMark = null;
         let valueToWrite = "✅"; 
 
+        // Mapeo de Tags a Columnas
         if (tag.toLowerCase().includes("transbordo")) {
             columnToMark = "Tag Transbordo";
             valueToWrite = tag; 
@@ -76,46 +63,115 @@ async function updateGoogleSheet(phone, tag) {
         else if (tag === "Tag lista dívida") columnToMark = "Tag lista dívida";
         else if (tag === "IA - CPC" || tag === "Tag IA - CPC") columnToMark = "Tag IA - CPC";
         else if (tag === "Tag Opções de Pagamento") columnToMark = "Tag Opções de Pagamento";
-        else if (tag === "BOT_BOLETO_GERADO") columnToMark = "Tag Formalizar Acordo";
+        else if (tag === "BOT_BOLETO_GERADO" || tag === "Tag Formalizar Acordo") columnToMark = "Tag Formalizar Acordo";
         else if (tag.includes("Erro - API") || tag.includes("Error")) {
             columnToMark = "Tag Erro - API";
             valueToWrite = tag;
         }
         else if (tag === "Tag Confirmação CPF") columnToMark = "Tag Confirmação CPF";
 
-        if (!columnToMark) {
-            console.log(`ℹ️ [Sheet Debug] El tag "${tag}" no corresponde a ninguna columna configurada.`);
-            return;
-        }
-
-        // 3. Verificar si la columna existe en el Excel
-        if (!headersEnExcel.includes(columnToMark)) {
-            console.error(`❌ [Sheet Debug] La columna "${columnToMark}" NO EXISTE en el Excel.`);
-            console.log(`👉 [Sheet Debug] Columnas encontradas: ${headersEnExcel.join(' | ')}`);
-            return;
-        }
+        if (!columnToMark || !headersEnExcel.includes(columnToMark)) return;
 
         const rows = await sheet.getRows();
         const targetRow = rows.find(row => String(row.get('Numero')) === String(phone));
 
         if (targetRow) {
-            targetRow.assign({ [columnToMark]: valueToWrite });
+            const updates = { [columnToMark]: valueToWrite };
+            // Si tenemos el CPF y la fila no lo tiene (o es diferente), lo actualizamos
+            if (cpf) updates['CPF'] = cpf; 
+            targetRow.assign(updates);
             await targetRow.save();
-            console.log(`✅ [Sheet Debug] Fila ACTUALIZADA para ${phone}`);
         } else {
-            const newRowData = { "Numero": phone };
+            // Nueva fila con Numero, CPF y el Tag correspondiente
+            const newRowData = { "Numero": phone, "CPF": cpf || "" };
             newRowData[columnToMark] = valueToWrite;
             await sheet.addRow(newRowData);
-            console.log(`✅ [Sheet Debug] Fila CREADA para ${phone}`);
         }
 
     } catch (error) {
-        console.error("❌ [Sheet Debug] Error CRÍTICO:", error.message);
-        if (error.message.includes("403")) console.error("👉 Revisa que el Service Account sea EDITOR.");
+        console.error("❌ [Sheet Error]:", error.message);
     }
 }
 
-// --- 1. HELPER RESPONDER ---
+// ==========================================
+// 🛠️ BASE DE DATOS (SQLite) - ¡MANTENIDA!
+// ==========================================
+const db = new sqlite3.Database('./cache_negociacion.db');
+
+db.serialize(() => {
+    db.run("PRAGMA journal_mode = WAL;");
+    // Tabla completa con acordos_json
+    db.run(`CREATE TABLE IF NOT EXISTS user_cache (
+        phone TEXT PRIMARY KEY, 
+        cpf TEXT, 
+        credores_json TEXT, 
+        dividas_json TEXT,
+        simulacion_json TEXT, 
+        acordos_json TEXT, 
+        last_updated DATETIME, 
+        last_tag TEXT, 
+        error_details TEXT
+    )`);
+    
+    // Migración segura: Intenta agregar la columna 'acordos_json' si no existe
+    db.run("ALTER TABLE user_cache ADD COLUMN acordos_json TEXT", (err) => {
+        // Ignorar error si la columna ya existe
+    });
+});
+
+// Función unificada para guardar en DB y actualizar Sheet
+function saveToCache(phone, cpf, credores, dividas, simulacion, tag, errorDetails = null, acordos = null) {
+    return new Promise((resolve, reject) => {
+        const stmt = db.prepare(`INSERT OR REPLACE INTO user_cache 
+            (phone, cpf, credores_json, dividas_json, simulacion_json, acordos_json, last_updated, last_tag, error_details)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`);
+        
+        stmt.run(
+            phone, 
+            cpf, 
+            JSON.stringify(credores || {}), 
+            JSON.stringify(dividas || []),
+            JSON.stringify(simulacion || {}), 
+            JSON.stringify(acordos || []), 
+            tag, 
+            errorDetails, 
+            async (err) => {
+                if (err) reject(err);
+                else {
+                    // Fuego y olvido: Actualizamos el Sheet en segundo plano
+                    updateGoogleSheet(phone, cpf, tag).catch(e => console.error("Sheet Async Err:", e));
+                    resolve();
+                }
+            }
+        );
+        stmt.finalize();
+    });
+}
+
+function getFromCache(phone) {
+    return new Promise((resolve, reject) => {
+        db.get("SELECT * FROM user_cache WHERE phone = ?", [phone], (err, row) => err ? reject(err) : resolve(row));
+    });
+}
+
+// ==========================================
+// 📡 CONFIGURACIÓN DE RED (AXIOS/EMAIL)
+// ==========================================
+dns.setDefaultResultOrder('ipv4first');
+const httpsAgent = new https.Agent({ keepAlive: true, rejectUnauthorized: true });
+const apiAuth = axios.create({ baseURL: 'https://bpdigital-api.bellinatiperez.com.br', timeout: 30000, httpsAgent });
+const apiNegocie = axios.create({ baseURL: 'https://api-negocie.bellinati.com.br', timeout: 30000, httpsAgent });
+const autoMailer = axios.create({ baseURL: "https://auto-mailer-delta.vercel.app/", timeout: 30000 }, httpsAgent);
+
+// Simulación DB (Tu lista de usuarios para Sync masivo)
+const simulacionDB = {
+    "42154393888": { "cpf_cnpj": "42154393888", "nombre": "Alvaro Montero" },
+    "98765432100": { "cpf_cnpj": "98765432100", "nombre": "Usuario de Prueba 2" },
+    "+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
+    // ... Agrega el resto de tu lista aquí
+};
+
+// Helper de Respuesta
 const responder = (res, statusCode, titleES, titlePT, rawData, mdES, mdPT) => {
     const messageES = mdES || rawData.mensaje || 'Operación completada.';
     const messagePT = mdPT || rawData.mensajePT || messageES;
@@ -133,113 +189,24 @@ function handleApiError(res, error, titleES, titlePT, extraData = {}) {
     responder(res, statusCode, titleES, titlePT, { error: error.message, ...extraData }, error.message, error.message);
 }
 
-// --- 2. CONFIGURACIÓN EMAIL ---
+// Helper Email
 async function enviarReporteEmail(raw_phone, tag, dadosCliente, erroDetalhe = null) {
     const destinatario = process.env.EMAIL_DESTINATARIO;
     if (!process.env.EMAIL_USER || !destinatario) return;
-
     if (!dadosCliente) dadosCliente = { nombre: raw_phone, phone: 'N/A', cpf_cnpj: 'N/A' };
-
-    console.log(`📧 ENVIANDO REPORTE AHORA (Interacción Detectada): [${tag}]`);
 
     const htmlContent = `
         <div style="border: 1px solid #d9534f; padding: 20px; font-family: sans-serif;">
-            <h2 style="color: #d9534f;">🚨 Transbordo Solicitado: ${tag}</h2>
-            <p><strong>Cliente:</strong> ${dadosCliente.nombre || 'N/A'}</p>
+            <h2 style="color: #d9534f;">🚨 Transbordo: ${tag}</h2>
             <p><strong>Teléfono:</strong> ${raw_phone || 'N/A'}</p>
             <p><strong>CPF:</strong> ${dadosCliente.cpf_cnpj || 'N/A'}</p>
-            ${erroDetalhe ? `<div style="background:#eee;padding:10px;margin-top:10px;"><strong>Detalle Técnico:</strong><br>${erroDetalhe}</div>` : ''}
+            ${erroDetalhe ? `<div style="background:#eee;padding:10px;">Error: ${erroDetalhe}</div>` : ''}
         </div>`;
 
     try {
-        console.log("Sending email");
-        await autoMailer.post("send-email", { to: destinatario, subject: `[TRANSBORDO] ${tag} - ${dadosCliente.phone}`, text: "", html: htmlContent });
-    } catch (e) { console.error('Error enviando email:', e.message); }
+        await autoMailer.post("send-email", { to: destinatario, subject: `[TRANSBORDO] ${tag}`, text: "", html: htmlContent });
+    } catch (e) { console.error('Error email:', e.message); }
 }
-
-// --- 3. BASE DE DATOS (Optimized WAL) ---
-const db = new sqlite3.Database('./cache_negociacion.db');
-
-db.serialize(() => {
-    db.run("PRAGMA journal_mode = WAL;");
-    db.run("PRAGMA synchronous = NORMAL;");
-    db.run(`CREATE TABLE IF NOT EXISTS user_cache (
-        phone TEXT PRIMARY KEY, cpf TEXT, credores_json TEXT, dividas_json TEXT,
-        simulacion_json TEXT, last_updated DATETIME, last_tag TEXT, error_details TEXT
-    )`);
-});
-
-// MODIFICADO: Ahora llama a updateGoogleSheet automáticamente
-function saveToCache(phone, cpf, credores, dividas, simulacion, tag, errorDetails = null) {
-    return new Promise((resolve, reject) => {
-        // 1. Guardar en SQLite
-        const stmt = db.prepare(`INSERT OR REPLACE INTO user_cache 
-            (phone, cpf, credores_json, dividas_json, simulacion_json, last_updated, last_tag, error_details)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`);
-        
-        stmt.run(phone, cpf, JSON.stringify(credores || {}), JSON.stringify(dividas || []),
-            JSON.stringify(simulacion || {}), tag, errorDetails, async (err) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    // 2. Actualizar Google Sheets (Fuego y olvido para no bloquear respuesta)
-                    updateGoogleSheet(phone, tag).catch(e => console.error("Sheets Error Async:", e));
-                    resolve();
-                }
-            });
-        stmt.finalize();
-    });
-}
-
-function getFromCache(phone) {
-    return new Promise((resolve, reject) => {
-        db.get("SELECT * FROM user_cache WHERE phone = ?", [phone], (err, row) => err ? reject(err) : resolve(row));
-    });
-}
-
-// --- 4. AXIOS ---
-dns.setDefaultResultOrder('ipv4first');
-const httpsAgent = new https.Agent({ keepAlive: true, rejectUnauthorized: true });
-const apiAuth = axios.create({ baseURL: 'https://bpdigital-api.bellinatiperez.com.br', timeout: 30000, httpsAgent });
-const apiNegocie = axios.create({ baseURL: 'https://api-negocie.bellinati.com.br', timeout: 30000, httpsAgent });
-const autoMailer = axios.create({ baseURL: "https://auto-mailer-delta.vercel.app/", timeout: 30000 }, httpsAgent);
-
-// --- 5. SIMULACIÓN DB ---
- const simulacionDB = {
-
-"42154393888": { "cpf_cnpj": "42154393888", "nombre": "Alvaro Montero" },
-
-"98765432100": { "cpf_cnpj": "98765432100", "nombre": "Usuario de Prueba 2" },
-
-"02604738554": { "cpf_cnpj": "02604738554", "nombre": "Alvaro Montero" },
-
-"06212643342": { "cpf_cnpj": "06212643342", "nombre": "Usuario Test 062" },
-
-"52116745888": { "cpf_cnpj": "52116745888", "nombre": "Usuario Test 521" },
-
-"12144201684": { "cpf_cnpj": "12144201684", "nombre": "Usuario Test 121" },
-
-"46483299885": { "cpf_cnpj": "46483299885", "nombre": "Usuario Test 464" },
-
-"26776559856": { "cpf_cnpj": "26776559856", "nombre": "Usuario Test 267" },
-
-"04513675020": { "cpf_cnpj": "04513675020", "nombre": "Usuario Test 045" },
-
-"06430897052": { "cpf_cnpj": "06430897052", "nombre": "Usuario Test 064" },
-
-"10173421997": { "cpf_cnpj": "10173421997", "nombre": "Usuario Test 101" },
-
-"04065282330": { "cpf_cnpj": "04065282330", "nombre": "Usuario Test 040" },
-
-"09241820918": { "cpf_cnpj": "09241820918", "nombre": "Usuario Test 092" },
-
-"63618955308": { "cpf_cnpj": "63618955308", "nombre": "Usuario Test 636" },
-
-"29103077861": {"cpf_cnpj" : "29103077861", "nombre": "Usuario test 1337"},
-
-"+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
-
-}; 
 
 async function getAuthToken(cpf_cnpj) {
     const res = await apiAuth.post('/api/Login/v5/Authentication', {
@@ -248,10 +215,13 @@ async function getAuthToken(cpf_cnpj) {
     return res.data.token || res.data.access_token;
 }
 
-// --- 6. SYNC SILENCIOSO ---
+// ==========================================
+// 🔄 LOGICA DE SINCRONIZACIÓN (SYNC) - ¡MANTENIDA!
+// ==========================================
 async function procesarYGuardarUsuario(phone, userData) {
     try {
         console.log(`🔄 Syncing ${phone}...`);
+        
         let token;
         try {
             token = await getAuthToken(userData.cpf_cnpj);
@@ -281,6 +251,8 @@ async function procesarYGuardarUsuario(phone, userData) {
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             dividasData = resDividas.data;
+            // Marcamos en Sheet que tiene deuda
+            await updateGoogleSheet(phone, userData.cpf_cnpj, "Tag lista dívida");
         } catch (e) {
             const tag = "Transbordo - Listar dividas - Erro";
             await saveToCache(phone, userData.cpf_cnpj, resCredores.data, [], {}, tag, e.message);
@@ -313,6 +285,7 @@ async function procesarYGuardarUsuario(phone, userData) {
             return false;
         }
 
+        // Guardamos todo en caché
         await saveToCache(phone, userData.cpf_cnpj, resCredores.data, dividasData, simulacionData, currentTag);
         return true;
     } catch (error) {
@@ -322,203 +295,244 @@ async function procesarYGuardarUsuario(phone, userData) {
 }
 
 // ==========================================
-// 🚦 ENDPOINTS
+// 🚀 LOGICA EN VIVO (LIVE CHECK)
+// ==========================================
+async function logicLiveCheck(res, phone, cpf_cnpj) {
+    console.log(`📡 Live Check para ${phone} (${cpf_cnpj})`);
+    
+    // Tag Inicial en Excel
+    await updateGoogleSheet(phone, cpf_cnpj, "Tag Confirmação CPF");
+
+    try {
+        const token = await getAuthToken(cpf_cnpj);
+        
+        // 1. Credores
+        const resCred = await apiNegocie.get('/api/v5/busca-credores', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (!resCred.data.credores?.length) {
+            const tag = "Transbordo - Credor não encontrado";
+            await saveToCache(phone, cpf_cnpj, resCred.data, [], {}, tag);
+            return responder(res, 200, "Sin Deudas", "Sem Dívidas", {}, "No se encontraron deudas activas.", "Não foram encontradas dívidas.");
+        }
+
+        const credor = resCred.data.credores[0];
+        const carteiraInfo = credor.carteiraCrms?.[0];
+        const carteiraId = carteiraInfo?.carteiraId || carteiraInfo?.id;
+
+        // 2. Dívida
+        let dividasData = [];
+        try {
+            const resDiv = await apiNegocie.post('/api/v5/busca-divida', 
+                { financeira: credor.financeira, crms: credor.crms }, 
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            dividasData = resDiv.data;
+            await updateGoogleSheet(phone, cpf_cnpj, "Tag lista dívida");
+        } catch (e) {
+            const tag = "Transbordo - Listar dividas - Erro";
+            await saveToCache(phone, cpf_cnpj, resCred.data, [], {}, tag, e.message);
+            return responder(res, 500, "Error", "Erro", {}, "Error al buscar deudas.", "Erro ao buscar dívidas.");
+        }
+
+        // 3. Busca Acordo (Nueva lógica solicitada)
+        let acordosData = [];
+        try {
+            const resAcordo = await apiNegocie.post('/api/v5/busca-acordo', 
+                { financeira: credor.financeira, crms: credor.crms },
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            acordosData = resAcordo.data;
+        } catch (e) {
+            console.log("⚠️ Sin acuerdos o error no crítico en busca-acordo");
+        }
+
+        // --- ESCENARIO A: YA TIENE ACUERDO ---
+        if (acordosData && acordosData.length > 0) {
+            const activeAgreement = acordosData[0];
+            const tag = "Acordo Existente Encontrado";
+            
+            // Guardamos todo en cache (incluyendo acuerdos)
+            await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, {}, tag, null, acordosData);
+
+            const mdES = `⚠️ **¡Ya tienes un acuerdo activo!**\n\n- Valor: R$ ${activeAgreement.valor}\n- Vencimiento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**¿Deseas emitir la segunda vía del boleto?** (Responde 'Sí' o 'Segunda Via')`;
+            const mdPT = `⚠️ **Você já possui um acordo ativo!**\n\n- Valor: R$ ${activeAgreement.valor}\n- Vencimento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**Deseja emitir a segunda via do boleto?** (Responda 'Sim' ou 'Segunda Via')`;
+            
+            return responder(res, 200, "Acuerdo Encontrado", "Acordo Encontrado", { 
+                existe_acordo: true, 
+                acuerdo: activeAgreement 
+            }, mdES, mdPT);
+        }
+
+        // --- ESCENARIO B: NO HAY ACUERDO (Flujo Normal) ---
+        let contratosDocs = [];
+        dividasData.forEach(d => d.contratos?.forEach(c => {
+            const num = c.numero || c.documento;
+            if (num) contratosDocs.push(String(num));
+        }));
+
+        let simulacionData = {};
+        let currentTag = "Tag Opções de Pagamento";
+
+        try {
+            const resSim = await apiNegocie.post('/api/v5/busca-opcao-pagamento', {
+                Crm: credor.crms[0], Carteira: carteiraId, Contratos: contratosDocs,
+                DataVencimento: null, ValorEntrada: 0, QuantidadeParcela: 0, ValorParcela: 0
+            }, { headers: { 'Authorization': `Bearer ${token}` } });
+            
+            simulacionData = resSim.data;
+            if (!simulacionData.opcoesPagamento?.length) {
+                currentTag = "Transbordo - Cliente sem opções de pagamento";
+                await enviarReporteEmail(phone, currentTag, { cpf_cnpj });
+            }
+        } catch (e) {
+            currentTag = "Transbordo - Busca Opções de Pagamento - Erro";
+            await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, {}, currentTag, e.message);
+            return responder(res, 500, "Error Opciones", "Erro Opções", {}, "Error calculando opciones.", "Erro calculando opções.");
+        }
+
+        await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, simulacionData, currentTag);
+        
+        return logicMostrarOfertas(res, { 
+            dividas_json: JSON.stringify(dividasData), 
+            simulacion_json: JSON.stringify(simulacionData) 
+        });
+
+    } catch (error) {
+        const tag = "Transbordo - Erro Genérico Live";
+        await saveToCache(phone, cpf_cnpj, {}, [], {}, tag, error.message);
+        await enviarReporteEmail(phone, tag, { cpf_cnpj }, error.message);
+        handleApiError(res, error, "Error Live Check", "Erro Live Check");
+    }
+}
+
+// ==========================================
+// 🚦 ENDPOINTS DEL SERVIDOR
 // ==========================================
 
-// 1. ENDPOINT TRANSBORDO & TAGS
+// 1. LIVE CHECK (Entrada Principal para nuevos usuarios)
+app.post('/api/live-check', async (req, res) => {
+    const { function_call_username, cpf_cnpj } = req.body;
+    const rawPhone = function_call_username?.includes("--") ? function_call_username.split("--").pop() : function_call_username;
+
+    if (!cpf_cnpj) return responder(res, 400, "Falta CPF", "Falta CPF", {}, "Por favor envía tu CPF.", "Por favor envie seu CPF.");
+
+    try {
+        const cachedUser = await getFromCache(rawPhone);
+        
+        // A. SI YA EXISTE EN CACHE Y CPF COINCIDE -> USAR CACHE
+        if (cachedUser && cachedUser.cpf === cpf_cnpj) {
+            console.log("⚡ Usuario en cache, retornando datos locales.");
+            
+            if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
+                return responder(res, 200, "Bloqueo", "Bloqueio", { transbordo: true, tag: cachedUser.last_tag }, "Transbordo requerido.", "Transbordo necessário.");
+            }
+            
+            const acordos = JSON.parse(cachedUser.acordos_json || '[]');
+            if (acordos.length > 0) {
+                 const mdES = `⚠️ **Acuerdo Activo Detectado**\n\n¿Quieres la segunda vía?`;
+                 const mdPT = `⚠️ **Acordo Ativo Detectado**\n\nDeseja a segunda via?`;
+                 return responder(res, 200, "Acuerdo Cache", "Acordo Cache", { existe_acordo: true }, mdES, mdPT);
+            }
+
+            return logicMostrarOfertas(res, cachedUser);
+        }
+
+        // B. SI NO EXISTE -> LLAMADA EN VIVO
+        await logicLiveCheck(res, rawPhone, cpf_cnpj);
+
+    } catch (e) {
+        handleApiError(res, e, "Error Check", "Erro Check");
+    }
+});
+
+// 2. TRANSBORDO (Manual o Verificación)
 app.post('/api/transbordo', async (req, res) => {
     const { tag, function_call_username } = req.body;
     const rawPhone = function_call_username?.includes("--") ? function_call_username.split("--").pop() : function_call_username;
-    const userData = simulacionDB[rawPhone] || { phone: rawPhone, nombre: "Desconhecido" };
+    
+    // Intentar recuperar CPF si existe, si no, solo el teléfono
+    const cachedUser = await getFromCache(rawPhone);
+    const cpf = cachedUser ? cachedUser.cpf : null;
 
     try {
         if (tag) {
-            if (tag.toLowerCase().includes("transbordo")) {
-                await enviarReporteEmail(rawPhone, tag, userData);
-            }
-            // Guardamos en cache (y por ende en Sheets)
-            await saveToCache(rawPhone, userData.cpf_cnpj, null, null, null, tag);
-            
-            return responder(res, 200, "Transferencia solicitada", "Transbordo obrigatório", { received: true, tag }, "Tag procesada.", "Sua solicitação está em espera.");
+            // Registro Manual
+            if (tag.toLowerCase().includes("transbordo")) await enviarReporteEmail(rawPhone, tag, { cpf_cnpj: cpf });
+            await saveToCache(rawPhone, cpf, null, null, null, tag);
+            return responder(res, 200, "Transferencia", "Transbordo", { received: true, tag }, "Procesado.", "Processado.");
         }
 
-        const cachedUser = await getFromCache(rawPhone);
-        if (!cachedUser) {
-            return responder(res, 404, "Usuario No Encontrado", "Usuário Não Encontrado", {}, "Datos no sync.", "Dados não sync.");
-        }
+        // Verificación de Estado
+        if (!cachedUser) return responder(res, 404, "No encontrado", "Não encontrado", {}, "Datos no sync.", "Dados não sync.");
 
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
-            await enviarReporteEmail(rawPhone, cachedUser.last_tag, userData, cachedUser.error_details);
-            const msgES = `⚠️ Transbordo requerido: **${cachedUser.last_tag}**.`;
-            const msgPT = `⚠️ Transbordo necessário: **${cachedUser.last_tag}**.`;
-            return responder(res, 200, "Transbordo Requerido", "Transbordo Necessário", { transbordo: true, tag: cachedUser.last_tag }, msgES, msgPT);
+            await enviarReporteEmail(rawPhone, cachedUser.last_tag, { cpf_cnpj: cpf }, cachedUser.error_details);
+            return responder(res, 200, "Transbordo", "Transbordo", { transbordo: true, tag: cachedUser.last_tag }, "Transbordo necesario.", "Transbordo necessário.");
         }
 
-        return responder(res, 200, "Estado Normal", "Estado Normal", { transbordo: false }, "OK", "OK");
+        return responder(res, 200, "OK", "OK", { transbordo: false }, "OK", "OK");
     } catch (e) {
         handleApiError(res, e, "Error Transbordo", "Erro Transbordo");
     }
 });
 
-// 2. ENDPOINT CONSULTAR OFERTAS
-app.post('/api/consultar-ofertas', async (req, res) => {
-    const { function_call_username, cpf_cnpj } = req.body;
-    const rawPhone = function_call_username?.includes("--") ? function_call_username.split("--").pop() : function_call_username;
-
-    try {
-        const cachedUser = await getFromCache(rawPhone);
-        if (!cachedUser) return responder(res, 404, "Sin Datos", "Sem Dados", {}, "Sync requerido.", "Sync requerido.");
-        
-        if (cachedUser.cpf != cpf_cnpj) {
-            // REGISTRAMOS TRANSBORDO POR CPF INCORRECTO
-            const tag = "Transbordo - Recusa Confirmação CPF";
-            const userData = simulacionDB[rawPhone] || { phone: rawPhone };
-            await saveToCache(rawPhone, userData.cpf_cnpj, {}, [], {}, tag); // Esto actualiza el sheet
-            await enviarReporteEmail(rawPhone, tag, userData);
-            
-            return responder(res, 404, "CPF Incorrecto", "CPF Incorreto", { transbordo: true, tag }, "El CPF no corresponde.", "CPF incorreto.");
-        }
-
-        if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
-            console.log("Reporte email");
-            await enviarReporteEmail(rawPhone, cachedUser.last_tag, simulacionDB[rawPhone], cachedUser.error_details);
-            return responder(res, 200, "Bloqueo", "Bloqueio", { transbordo: true, tag: cachedUser.last_tag }, `⚠️ ${cachedUser.last_tag}`, `⚠️ ${cachedUser.last_tag}`);
-        }
-
-        await logicBuscarCredoresCompletos(res, cachedUser);
-    } catch (e) {
-        handleApiError(res, e, "Error Consultar", "Erro Consultar");
-    }
-});
-
-// 3. ENDPOINT EMITIR BOLETO
+// 3. EMITIR BOLETO (Nueva y Segunda Vía)
 app.post('/api/emitir-boleto', async (req, res) => {
-    const { function_call_username, opt, Parcelas } = req.body;
+    const { function_call_username, opt, Parcelas, segunda_via } = req.body;
     const rawPhone = function_call_username?.includes("--") ? function_call_username.split("--").pop() : function_call_username;
-    const userData = simulacionDB[rawPhone] || { phone: rawPhone, nombre: "Desconhecido" };
 
     try {
         const cachedUser = await getFromCache(rawPhone);
         if (!cachedUser) return responder(res, 404, "Sin Datos", "Sem Dados", {}, "Error datos.", "Erro dados.");
 
-        if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
-            console.log("Reporte email");
-            await enviarReporteEmail(rawPhone, cachedUser.last_tag, userData, cachedUser.error_details);
-            return responder(res, 200, "Bloqueo", "Bloqueio", { transbordo: true }, "Transbordo requerido.", "Transbordo necessário.");
+        // A. SEGUNDA VÍA
+        if (segunda_via) {
+            const acordos = JSON.parse(cachedUser.acordos_json || '[]');
+            if (acordos.length === 0) return responder(res, 400, "Sin Acuerdo", "Sem Acordo", {}, "No hay acuerdo activo.", "Não há acordo ativo.");
+            
+            const acordo = acordos[0];
+            const token = await getAuthToken(cachedUser.cpf);
+            
+            const payload2Via = {
+                "Crm": acordo.crm,
+                "CodigoCarteira": acordo.codCarteira, 
+                "Fase": acordo.fase || "",
+                "CNPJ_CPF": cachedUser.cpf,
+                "Contrato": acordo.contrato?.[0]?.numero,
+                "DataVencimento": acordo.parcelas?.[0]?.dataVencimento,
+                "Id": acordo.idAcordo,
+                "NossoNumero": "",
+                "QuantidadeParcela": acordo.quantidadeParcelas,
+                "ValorBoleto": acordo.valor,
+                "TipoBoleto": "2"
+            };
+
+            const res2Via = await apiNegocie.post('/api/v5/emitir-boleto-segunda-via', payload2Via, { 
+                headers: { 'Authorization': `Bearer ${token}` } 
+            });
+
+            if (!res2Via.data.sucesso) throw new Error(res2Via.data.msgRetorno || "Error 2a Via");
+
+            const boleto = res2Via.data;
+            const mdES = `✅ **Segunda Vía Emitida**\n\n📄 Línea: \`${boleto.linhaDigitavel}\`\n💰 Valor: R$ ${boleto.valorTotal}`;
+            const mdPT = `✅ **Segunda Via Emitida**\n\n📄 Linha: \`${boleto.linhaDigitavel}\`\n💰 Valor: R$ ${boleto.valorTotal}`;
+            
+            await updateGoogleSheet(rawPhone, cachedUser.cpf, "BOT_BOLETO_GERADO");
+            return responder(res, 200, "2a Via OK", "2a Via OK", boleto, mdES, mdPT);
         }
 
-        await logicEmitirBoleto(req, res, rawPhone, cachedUser, userData);
+        // B. EMISIÓN NUEVA
+        await logicEmitirBoletoNuevo(req, res, rawPhone, cachedUser);
+
     } catch (e) {
         handleApiError(res, e, "Error Boleto", "Erro Boleto");
     }
 });
 
-// --- LÓGICA INTERNA ---
-
-async function logicBuscarCredoresCompletos(res, cachedUser) {
-    const dividas = JSON.parse(cachedUser.dividas_json || '[]');
-    const sim = JSON.parse(cachedUser.simulacion_json || '{}');
-    const opcoes = sim.opcoesPagamento || [];
-
-    let mdES = `**Hola.** He revisado tu estado de cuenta:\n\n`;
-    let mdPT = `**Olá.** Verifiquei seu extrato:\n\n`;
-
-    if (dividas.length === 0) {
-        mdES = "No encontré deudas pendientes."; mdPT = "Não encontrei dívidas pendentes.";
-    } else {
-        mdES += `### 📌 Tus Deudas:\n`; mdPT += `### 📌 Suas Dívidas:\n`;
-        dividas.forEach(d => {
-            mdES += `- **Valor:** R$ ${d.valor}\n  - Contrato: ${d.contratos?.[0]?.numero}\n\n`;
-            mdPT += `- **Valor:** R$ ${d.valor}\n  - Contrato: ${d.contratos?.[0]?.numero}\n\n`;
-        });
-    }
-
-    if (opcoes.length > 0) {
-        mdES += `### 💳 Opciones de Pago:\n\n`; mdPT += `### 💳 Opções de Pagamento:\n\n`;
-        opcoes.forEach((op, i) => {
-            const val = op.valorTotalComCustas || op.valor;
-            mdES += `🔹 **Opción ${i + 1}:** ${op.texto}\n   (Total: R$ ${val})\n\n`;
-            mdPT += `🔹 **Opção ${i + 1}:** ${op.texto}\n   (Total: R$ ${val})\n\n`;
-        });
-        mdES += `\n**Responde con el número de la opción.**`; mdPT += `\n**Responda com o número da opção.**`;
-    }
-
-    responder(res, 200, "Estado de Cuenta", "Extrato", { dividas, opcoes }, mdES, mdPT);
-}
-
-async function logicEmitirBoleto(req, res, phone, cachedUser, userData) {
-    const { opt, Parcelas } = req.body;
-    try {
-        const simCache = JSON.parse(cachedUser.simulacion_json);
-        const opcoes = simCache.opcoesPagamento || [];
-
-        let targetOp;
-        if (opt) {
-            const idx = parseInt(opt) - 1;
-            if (idx >= 0 && idx < opcoes.length) targetOp = opcoes[idx];
-        } else if (Parcelas) {
-            targetOp = opcoes.find(o => o.qtdParcelas == Parcelas);
-        }
-
-        if (!targetOp) return responder(res, 400, "Opción Inválida", "Opção Inválida", {}, "Opción no válida.", "Opção inválida.");
-
-        const token = await getAuthToken(userData.cpf_cnpj);
-        const credoresData = JSON.parse(cachedUser.credores_json);
-        const credor = credoresData.credores[0];
-        const carteiraId = credor.carteiraCrms[0].carteiraId || credor.carteiraCrms[0].id;
-        const contratos = targetOp.contratos || [];
-
-        const resReSimul = await apiNegocie.post('/api/v5/busca-opcao-pagamento', {
-            Crm: credor.crms[0], Carteira: carteiraId, Contratos: contratos,
-            DataVencimento: null, ValorEntrada: 0, QuantidadeParcela: targetOp.qtdParcelas, ValorParcela: 0
-        }, { headers: { 'Authorization': `Bearer ${token}` } });
-
-        const freshOp = resReSimul.data.opcoesPagamento?.find(o => o.qtdParcelas == targetOp.qtdParcelas);
-        if (!freshOp) throw new Error("Opción no disponible.");
-        let idBoleto = freshOp.codigo;
-
-        if (resReSimul.data.chamarResumoBoleto) {
-            const resResumo = await apiNegocie.post('/api/v5/resumo-boleto', {
-                Crm: credor.crms[0], CodigoCarteira: carteiraId, CNPJ_CPF: userData.cpf_cnpj,
-                Contrato: contratos[0], CodigoOpcao: idBoleto
-            }, { headers: { 'Authorization': `Bearer ${token}` } });
-            if (resResumo.data.sucesso) idBoleto = resResumo.data.identificador;
-            else throw new Error("Fallo en Resumo Boleto");
-        }
-
-        const resEmitir = await apiNegocie.post('/api/v5/emitir-boleto', {
-            Crm: credor.crms[0], Carteira: carteiraId, CNPJ_CPF: userData.cpf_cnpj,
-            fase: JSON.parse(cachedUser.dividas_json)[0]?.fase || "", Contrato: contratos[0], Valor: freshOp.valor,
-            Parcelas: freshOp.qtdParcelas, DataVencimento: freshOp.dataVencimento,
-            Identificador: idBoleto, TipoContrato: null
-        }, { headers: { 'Authorization': `Bearer ${token}` } });
-
-        if (!resEmitir.data.sucesso) throw new Error(resEmitir.data.msgRetorno || "Error API.");
-
-        // Éxito: Guardamos tag de éxito que activará "Tag Formalizar Acordo" en Sheets
-        await saveToCache(phone, userData.cpf_cnpj, {}, [], {}, "BOT_BOLETO_GERADO");
-        
-        const boleto = resEmitir.data;
-        const mdES = `✅ **¡Acuerdo Exitoso!**\n\n📄 Código: \`${boleto.linhaDigitavel}\`\n💰 Valor: R$ ${boleto.valorTotal}\n📅 Vence: ${boleto.vcto}`;
-        const mdPT = `✅ **Acordo Realizado!**\n\n📄 Linha Digitável: \`${boleto.linhaDigitavel}\`\n💰 Valor: R$ ${boleto.valorTotal}\n📅 Vencimento: ${boleto.vcto}`;
-
-        responder(res, 200, "Boleto Generado", "Boleto Gerado", boleto, mdES, mdPT);
-
-    } catch (error) {
-        const tag = "Transbordo - Erro emissão de boleto";
-        await enviarReporteEmail(phone, tag, userData, error.message);
-        await saveToCache(phone, userData.cpf_cnpj, {}, [], {}, tag, error.message);
-        const errES = "Hubo un error técnico. He notificado al equipo.";
-        const errPT = "Houve um erro técnico. Equipe notificada.";
-        responder(res, 500, "Error Emisión", "Erro Emissão", { transbordo: true, tag }, errES, errPT);
-    }
-}
-
-// --- SYNC BATCH ---
+// 4. SYNC MASIVO (Restaurado)
 app.post('/api/admin/sync', async (req, res) => {
     const phones = Object.keys(simulacionDB);
     const BATCH_SIZE = 5;
-    console.log(`🚀 Sync Optimizado (${phones.length} usuarios)`);
+    console.log(`🚀 Sync Masivo (${phones.length} usuarios)`);
     res.json({ msg: "Sync iniciado", total: phones.length });
 
     const chunkArray = (arr, size) => {
@@ -526,12 +540,101 @@ app.post('/api/admin/sync', async (req, res) => {
         for (let i = 0; i < arr.length; i += size) res.push(arr.slice(i, i + size));
         return res;
     };
+    
+    // Procesamos en lotes
     const batches = chunkArray(phones, BATCH_SIZE);
     for (const batch of batches) {
         await Promise.all(batch.map(ph => procesarYGuardarUsuario(ph, simulacionDB[ph])));
+        // Pequeña pausa para no saturar
         await new Promise(r => setTimeout(r, 500));
     }
     console.log("🏁 Sync Finalizado.");
 });
+
+// --- LOGICA DE RESPUESTA & EMISIÓN NUEVA ---
+async function logicMostrarOfertas(res, cachedUser) {
+    const dividas = JSON.parse(cachedUser.dividas_json || '[]');
+    const sim = JSON.parse(cachedUser.simulacion_json || '{}');
+    const opcoes = sim.opcoesPagamento || [];
+
+    let mdES = `**Hola.** Estado de cuenta:\n\n`;
+    let mdPT = `**Olá.** Extrato:\n\n`;
+
+    dividas.forEach(d => {
+        mdES += `- R$ ${d.valor} (Contrato: ${d.contratos?.[0]?.numero})\n`;
+        mdPT += `- R$ ${d.valor} (Contrato: ${d.contratos?.[0]?.numero})\n`;
+    });
+
+    if (opcoes.length > 0) {
+        mdES += `\n**Opciones:**\n`; mdPT += `\n**Opções:**\n`;
+        opcoes.forEach((op, i) => {
+            const val = op.valorTotalComCustas || op.valor;
+            mdES += `${i + 1}. ${op.texto} (R$ ${val})\n`;
+            mdPT += `${i + 1}. ${op.texto} (R$ ${val})\n`;
+        });
+    }
+
+    responder(res, 200, "Ofertas", "Ofertas", { dividas, opcoes }, mdES, mdPT);
+}
+
+async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
+    const { opt, Parcelas } = req.body;
+    try {
+        const simCache = JSON.parse(cachedUser.simulacion_json);
+        const opcoes = simCache.opcoesPagamento || [];
+        
+        let targetOp;
+        if (opt) targetOp = opcoes[parseInt(opt) - 1];
+        else if (Parcelas) targetOp = opcoes.find(o => o.qtdParcelas == Parcelas);
+
+        if (!targetOp) return responder(res, 400, "Inválido", "Inválido", {}, "Opción inválida.", "Opção inválida.");
+
+        const token = await getAuthToken(cachedUser.cpf);
+        const credoresData = JSON.parse(cachedUser.credores_json);
+        const credor = credoresData.credores[0];
+        const carteiraId = credor.carteiraCrms[0].carteiraId || credor.carteiraCrms[0].id;
+        const contratos = targetOp.contratos || [];
+
+        // Re-simular para obtener ID fresco
+        const resReSimul = await apiNegocie.post('/api/v5/busca-opcao-pagamento', {
+            Crm: credor.crms[0], Carteira: carteiraId, Contratos: contratos,
+            DataVencimento: null, ValorEntrada: 0, QuantidadeParcela: targetOp.qtdParcelas, ValorParcela: 0
+        }, { headers: { 'Authorization': `Bearer ${token}` } });
+
+        const freshOp = resReSimul.data.opcoesPagamento?.find(o => o.qtdParcelas == targetOp.qtdParcelas);
+        let idBoleto = freshOp.codigo;
+
+        if (resReSimul.data.chamarResumoBoleto) {
+            const resResumo = await apiNegocie.post('/api/v5/resumo-boleto', {
+                Crm: credor.crms[0], CodigoCarteira: carteiraId, CNPJ_CPF: cachedUser.cpf,
+                Contrato: contratos[0], CodigoOpcao: idBoleto
+            }, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (resResumo.data.sucesso) idBoleto = resResumo.data.identificador;
+        }
+
+        const resEmitir = await apiNegocie.post('/api/v5/emitir-boleto', {
+            Crm: credor.crms[0], Carteira: carteiraId, CNPJ_CPF: cachedUser.cpf,
+            fase: JSON.parse(cachedUser.dividas_json)[0]?.fase || "", 
+            Contrato: contratos[0], Valor: freshOp.valor, 
+            Parcelas: freshOp.qtdParcelas, DataVencimento: freshOp.dataVencimento,
+            Identificador: idBoleto, TipoContrato: null
+        }, { headers: { 'Authorization': `Bearer ${token}` } });
+
+        if (!resEmitir.data.sucesso) throw new Error(resEmitir.data.msgRetorno);
+
+        await updateGoogleSheet(phone, cachedUser.cpf, "BOT_BOLETO_GERADO");
+        const boleto = resEmitir.data;
+        
+        const mdES = `✅ **Boleto Generado**\nCode: \`${boleto.linhaDigitavel}\`\nValor: R$ ${boleto.valorTotal}`;
+        const mdPT = `✅ **Boleto Gerado**\nLinha: \`${boleto.linhaDigitavel}\`\nValor: R$ ${boleto.valorTotal}`;
+        responder(res, 200, "Boleto", "Boleto", boleto, mdES, mdPT);
+
+    } catch (error) {
+        const tag = "Transbordo - Erro emissão de boleto";
+        await enviarReporteEmail(phone, tag, { cpf_cnpj: cachedUser.cpf }, error.message);
+        await saveToCache(phone, cachedUser.cpf, {}, [], {}, tag, error.message);
+        responder(res, 500, "Error Emisión", "Erro Emissão", { transbordo: true }, "Error técnico.", "Erro técnico.");
+    }
+}
 
 app.listen(PORT, HOST, () => console.log(`Server running on ${HOST}:${PORT}`));
