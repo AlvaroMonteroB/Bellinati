@@ -577,7 +577,7 @@ app.post('/api/emitir-boleto', async (req, res) => {
 // 4. SYNC MASIVO (Restaurado)
 app.post('/api/admin/sync', async (req, res) => {
     const phones = Object.keys(simulacionDB);
-    const BATCH_SIZE = 5;
+    const BATCH_SIZE = 20;
     console.log(`🚀 Sync Masivo (${phones.length} usuarios)`);
     res.json({ msg: "Sync iniciado", total: phones.length });
 
