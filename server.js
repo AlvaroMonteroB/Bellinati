@@ -222,7 +222,17 @@ const autoMailer = axios.create({ baseURL: "https://auto-mailer-delta.vercel.app
   "2505540543": { "cpf_cnpj": "2505540543", "nombre": "Usuario Test 7" },
   "3266177797": { "cpf_cnpj": "3266177797", "nombre": "Usuario Test 8" },
   "4957486921": { "cpf_cnpj": "4957486921", "nombre": "Usuario Test 9" },
-  "7651663721": { "cpf_cnpj": "7651663721", "nombre": "Usuario Test 10" }
+  "7651663721": { "cpf_cnpj": "7651663721", "nombre": "Usuario Test 10" },
+  "788324039": { "cpf_cnpj": "788324039", "nombre": "Usuario Test 11" },
+  "357155106": { "cpf_cnpj": "357155106", "nombre": "Usuario Test 12" },
+  "432206906": { "cpf_cnpj": "432206906", "nombre": "Usuario Test 13" },
+  "1012234983": { "cpf_cnpj": "1012234983", "nombre": "Usuario Test 14" },
+  "489302610": { "cpf_cnpj": "489302610", "nombre": "Usuario Test 15" },
+  "1751211509": { "cpf_cnpj": "1751211509", "nombre": "Usuario Test 16" },
+  "2505540543": { "cpf_cnpj": "2505540543", "nombre": "Usuario Test 17" },
+  "3266177797": { "cpf_cnpj": "3266177797", "nombre": "Usuario Test 18" },
+  "4957486921": { "cpf_cnpj": "4957486921", "nombre": "Usuario Test 19" },
+  "7651663721": { "cpf_cnpj": "7651663721", "nombre": "Usuario Test 20" }
 
 }; 
 
@@ -693,3 +703,4 @@ async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
 }
 
 app.listen(PORT, HOST, () => console.log(`Server running on ${HOST}:${PORT}`));
+
