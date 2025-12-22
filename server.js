@@ -248,10 +248,13 @@ const responder = (res, statusCode, titleES, titlePT, rawData, mdES, mdPT) => {
     });
 };
 
-function handleApiError(res, error, titleES, titlePT, extraData = {}) {
+async function handleApiError(res, error, titleES, titlePT, extraData = {}) {
     console.error(`❌ [Error] ${titleES}:`, error.message);
     const statusCode = error.response ? error.response.status : 500;
+    await updateGoogleSheet(phone, userData.cpf_cnpj, "Tag Erro - API");
+    
     responder(res, statusCode, titleES, titlePT, { error: error.message, ...extraData }, error.message, error.message);
+    
 }
 
 // Helper Email
@@ -463,7 +466,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
         });
 
     } catch (error) {
-        const tag = "Transbordo - Erro Genérico Live";
+        const tag = "Transbordo - Erro Genérico";
         await saveToCache(phone, cpf_cnpj, {}, [], {}, tag, error.message);
         await enviarReporteEmail(phone, tag, { cpf_cnpj }, error.message);
         handleApiError(res, error, "Error Live Check", "Erro Live Check");
@@ -506,6 +509,7 @@ app.post('/api/live-check', async (req, res) => {
         await logicLiveCheck(res, rawPhone, cpf_cnpj);
 
     } catch (e) {
+        await enviarReporteEmail(rawPhone,"Tag Erro - API",{cpf_cnpj},e.message)
         handleApiError(res, e, "Error Check", "Erro Check");
     }
 });
@@ -590,6 +594,7 @@ app.post('/api/emitir-boleto', async (req, res) => {
         await logicEmitirBoletoNuevo(req, res, rawPhone, cachedUser);
 
     } catch (e) {
+        await enviarReporteEmail(rawPhone,"Tag Erro - API",{cpf_cnpj},e.message)
         handleApiError(res, e, "Error Boleto", "Erro Boleto");
     }
 });
