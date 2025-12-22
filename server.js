@@ -601,6 +601,37 @@ app.post('/api/emitir-boleto', async (req, res) => {
     }
 });
 
+app.post('/api/admin/clear-db', (req, res) => {
+    // 1. Pequeña medida de seguridad para evitar accidentes
+    const { confirmacion } = req.body;
+    
+    if (confirmacion !== "SI_ESTOY_SEGURO") {
+        return res.status(400).json({ 
+            status: 'error', 
+            message: "Falta confirmación de seguridad. Envía { 'confirmacion': 'SI_ESTOY_SEGURO' }" 
+        });
+    }
+
+    // 2. Ejecutar el borrado (DELETE FROM borra datos, mantiene estructura)
+    db.run("DELETE FROM user_cache", function(err) {
+        if (err) {
+            console.error("❌ Error al limpiar DB:", err.message);
+            return res.status(500).json({ status: 'error', message: err.message });
+        }
+
+        // 3. Compactar la base de datos (opcional, libera espacio en disco)
+        db.run("VACUUM", () => {
+            console.log(`🗑️ Base de datos limpiada. ${this.changes} filas eliminadas.`);
+            
+            res.json({
+                status: 'exito',
+                message: `Base de datos limpiada correctamente.`,
+                filas_eliminadas: this.changes
+            });
+        });
+    });
+});
+
 // 4. SYNC MASIVO (Restaurado)
 app.post('/api/admin/sync', async (req, res) => {
     const phones = Object.keys(simulacionDB);
