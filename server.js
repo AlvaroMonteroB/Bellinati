@@ -250,7 +250,7 @@ const responder = (res, statusCode, titleES, titlePT, rawData, mdES, mdPT) => {
 
 async function handleApiError(res, error, titleES, titlePT, extraData = {}) {
     console.error(`❌ [Error] ${titleES}:`, error.message);
-    const statusCode = error.response ? error.response.status : 500;
+    
     responder(res, 200, titleES, titlePT, { error: error.message, ...extraData }, error.message, error.message);
     
 }
@@ -596,8 +596,8 @@ app.post('/api/emitir-boleto', async (req, res) => {
         query= await getFromCache(rawPhone)
         cpf= query.cpf
         await updateGoogleSheet(rawPhone, cpf, "Tag Erro - API");
-        await enviarReporteEmail(rawPhone,"Tag Erro - API",{cpf},e.message)
-        handleApiError(res, e, "Error Boleto", "Erro Boleto segunda via");
+        await enviarReporteEmail(rawPhone,"Tag Erro - API",{ cpf_cnpj:cpf },e.message)
+        handleApiError(res, {message:"Ocorreu um erro ao tentar gerar seu boleto, Um atendente humano entrará em contato com você assim que estiver disponível."}, "Error Boleto", "Erro Boleto segunda via");
     }
 });
 
