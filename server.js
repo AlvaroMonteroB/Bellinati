@@ -597,7 +597,7 @@ app.post('/api/emitir-boleto', async (req, res) => {
         cpf= query.cpf
         await updateGoogleSheet(rawPhone, cpf, "Tag Erro - API");
         await enviarReporteEmail(rawPhone,"Tag Erro - API",{cpf},e.message)
-        handleApiError(res, e, "Error Boleto", "Erro Boleto");
+        handleApiError(res, e, "Error Boleto", "Erro Boleto segunda via");
     }
 });
 
