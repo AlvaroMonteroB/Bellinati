@@ -377,7 +377,16 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
         if (!resCred.data.credores?.length) {
             const tag = "Transbordo - Credor não encontrado";
             await saveToCache(phone, cpf_cnpj, resCred.data, [], {}, tag);
-            return responder(res, 200, "Sin Deudas", "Sem Dívidas", {}, "No se encontraron deudas activas.", "Não foram encontradas dívidas.");
+            await updateGoogleSheet(phone,cpf_cnpj,tag)
+            return responder(
+                            res, 
+                            200, 
+                            "Datos Incompletos", 
+                            "Transferência para Especialista", 
+                            { "tag": "Transbordo - Dados Incompletos" }, 
+                            "Datos incompletos. Transfiriendo a humano (Horario: L-V 08:00-20:40, S 08:00-14:20).", 
+                            "Para garantir a segurança e precisão na análise dos seus dados, vou direcionar seu atendimento para um especialista. Nosso time está disponível de segunda a sexta, das 08:00 às 20:40, e aos sábados, das 08:00 às 14:20. Se estivermos dentro do horário de atendimento, aguarde um momento."
+                            );
         }
 
         const credor = resCred.data.credores[0];
@@ -396,7 +405,15 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
         } catch (e) {
             const tag = "Transbordo - Listar dividas - Erro";
             await saveToCache(phone, cpf_cnpj, resCred.data, [], {}, tag, e.message);
-            return responder(res, 500, "Error", "Erro", {}, "Error al buscar deudas.", "Erro ao buscar dívidas.");
+            return responder(
+                            res, 
+                            500, 
+                            "Error - Transferencia", 
+                            "Erro Técnico - Transferência", 
+                            { "tag": "Transbordo - Erro API" }, 
+                            "Error al buscar deudas. Se transfiere a humano según disponibilidad.", 
+                            "Tivemos um erro técnico ao consultar suas informações. Para te ajudar, vou transferir essa conversa para o nosso atendimento humano. Assim que um especialista estiver livre (dentro do horário: Seg a Sex 08:00-20:40 e Sáb 08:00-14:20), ele falará com você."
+                            );
         }
 
         // 3. Busca Acordo (Nueva lógica solicitada)
@@ -448,12 +465,31 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             if (!simulacionData.opcoesPagamento?.length) {
                 currentTag = "Transbordo - Cliente sem opções de pagamento";
                 await enviarReporteEmail(phone, currentTag, { cpf_cnpj });
-                return responder(res,500, "Sin opciones de pago", currentTag, {},"Cliente sin opciones", "Cliente sem opções de pagamento")
+                await updateGoogleSheet(phone, cpf_cnpj, "Transbordo - Cliente sem opções de pagamento");
+                return responder(
+                                res, 
+                                500, 
+                                "Sin Opciones de Pago", 
+                                "Sem Opções Automáticas", 
+                                { "tag": "Transbordo - Sem Opções" }, 
+                                "No se encontraron opciones de pago. Se transfiere a humano según disponibilidad.", 
+                                "Não encontrei propostas de negociação automática disponíveis para o seu caso neste momento. Por isso, vou transferir você para o atendimento humano. Caso um de nossos especialistas esteja livre agora (dentro do horário: Seg a Sex 08:00-20:40, Sáb 08:00-14:20), ele dará continuidade ao seu atendimento."
+                                );
+            } else{
+                await updateGoogleSheet(phone, cpf_cnpj, "Tag Opções de Pagamento");
             }
         } catch (e) {
             currentTag = "Transbordo - Busca Opções de Pagamento - Erro";
             await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, {}, currentTag, e.message);
-            return responder(res, 500, "Error Opciones", "Erro Opções", {}, "Error calculando opciones.", "Erro calculando opções.");
+            return responder(
+                            res, 
+                            500, 
+                            "Error Calculando Opciones", 
+                            "Erro no Cálculo", 
+                            { "tag": "Transbordo - Erro Calculo" }, 
+                            "Error al calcular opciones. Se transfiere a humano según disponibilidad.", 
+                            "Houve uma falha técnica ao calcular as opções de parcelamento automaticamente. Para não te deixar sem resposta, vou transferir você para o atendimento humano. Caso um especialista esteja livre (dentro do horário: Seg a Sex 08:00-20:40, Sáb 08:00-14:20), ele te ajudará a concluir a negociação."
+                            );
         }
 
         await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, simulacionData, currentTag);
@@ -490,14 +526,29 @@ app.post('/api/live-check', async (req, res) => {
             console.log("⚡ Usuario en cache, retornando datos locales.");
             
             if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
-                return responder(res, 200, "Bloqueo", "Bloqueio", { transbordo: true, tag: cachedUser.last_tag }, "Transbordo requerido.", "Transbordo necessário.");
+                return responder(
+                                    res, 
+                                    200, 
+                                    "Bloqueo - Transferencia Activa", 
+                                    "Aguardando Especialista", 
+                                    { transbordo: true, tag: cachedUser.last_tag }, 
+                                    "El usuario ya fue transferido. Bloqueando interacción automática.", 
+                                    "Seu atendimento já foi transferido para um de nossos especialistas. Por favor, aguarde um momento que em breve alguém falará com você por aqui."
+                                    );
             }
             
             const acordos = JSON.parse(cachedUser.acordos_json || '[]');
             if (acordos.length > 0) {
-                 const mdES = `⚠️ **Acuerdo Activo Detectado**\n\n¿Quieres la segunda vía?`;
-                 const mdPT = `⚠️ **Acordo Ativo Detectado**\n\nDeseja a segunda via?`;
-                 return responder(res, 200, "Acuerdo Cache", "Acordo detectado", { existe_acordo: true }, mdES, mdPT);
+                 const activeAgreement = acordos[0]; // Obtenemos el acuerdo completo del cache
+                 
+                 // Construimos el mensaje detallado igual que en Live Check
+                 const mdES = `⚠️ **¡Ya tienes un acuerdo activo!**\n\n- Valor: R$ ${activeAgreement.valor}\n- Vencimiento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**¿Deseas emitir la segunda vía del boleto?** (Responde 'Sí' o 'Segunda Via')`;
+                 const mdPT = `⚠️ **Você já possui um acordo ativo!**\n\n- Valor: R$ ${activeAgreement.valor}\n- Vencimento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**Deseja emitir a segunda via do boleto?** (Responda 'Sim' ou 'Segunda Via')`;
+                 
+                 return responder(res, 200, "Acuerdo Encontrado", "Acordo Encontrado", { 
+                     existe_acordo: true, 
+                     acuerdo: activeAgreement 
+                 }, mdES, mdPT);
             }
 
             return logicMostrarOfertas(res, cachedUser);
@@ -526,7 +577,15 @@ app.post('/api/transbordo', async (req, res) => {
             // Registro Manual
             if (tag.toLowerCase().includes("transbordo")) await enviarReporteEmail(rawPhone, tag, { cpf_cnpj: cpf });
             await saveToCache(rawPhone, cpf, null, null, null, tag);
-            return responder(res, 200, "Transferencia", "Transbordo", { received: true, tag }, "Procesado.", "Processado.");
+            return responder(
+                            res, 
+                            200, 
+                            "Transferencia Solicitada", 
+                            "Transferência Solicitada", 
+                            { received: true, tag }, 
+                            "Usuario solicitó humano. Transfiriendo según horario y disponibilidad.", 
+                            "Compreendo. Vou direcionar seu atendimento para um de nossos especialistas. Caso um atendente esteja livre (dentro do horário: Seg a Sex 08:00-20:40, Sáb 08:00-14:20), ele dará continuidade à sua solicitação por aqui."
+                            );
         }
 
         // Verificación de Estado
