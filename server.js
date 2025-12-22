@@ -594,7 +594,9 @@ app.post('/api/emitir-boleto', async (req, res) => {
         await logicEmitirBoletoNuevo(req, res, rawPhone, cachedUser);
 
     } catch (e) {
-        await enviarReporteEmail(rawPhone,"Tag Erro - API",{cpf_cnpj},e.message)
+        query= await getFromCache(rawPhone)
+        cpf= query.cpf
+        await enviarReporteEmail(rawPhone,"Tag Erro - API",{cpf},e.message)
         handleApiError(res, e, "Error Boleto", "Erro Boleto");
     }
 });
