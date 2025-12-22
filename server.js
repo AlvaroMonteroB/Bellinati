@@ -594,7 +594,7 @@ app.post('/api/emitir-boleto', async (req, res) => {
     } catch (e) {
         query= await getFromCache(rawPhone)
         cpf= query.cpf
-        await updateGoogleSheet(rawPhone, userData.cpf_cnpj, "Tag Erro - API");
+        await updateGoogleSheet(rawPhone, cpf, "Tag Erro - API");
         await enviarReporteEmail(rawPhone,"Tag Erro - API",{cpf},e.message)
         handleApiError(res, e, "Error Boleto", "Erro Boleto");
     }
