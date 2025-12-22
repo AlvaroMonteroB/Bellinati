@@ -251,8 +251,6 @@ const responder = (res, statusCode, titleES, titlePT, rawData, mdES, mdPT) => {
 async function handleApiError(res, error, titleES, titlePT, extraData = {}) {
     console.error(`❌ [Error] ${titleES}:`, error.message);
     const statusCode = error.response ? error.response.status : 500;
-    await updateGoogleSheet(phone, userData.cpf_cnpj, "Tag Erro - API");
-    
     responder(res, statusCode, titleES, titlePT, { error: error.message, ...extraData }, error.message, error.message);
     
 }
@@ -499,7 +497,7 @@ app.post('/api/live-check', async (req, res) => {
             if (acordos.length > 0) {
                  const mdES = `⚠️ **Acuerdo Activo Detectado**\n\n¿Quieres la segunda vía?`;
                  const mdPT = `⚠️ **Acordo Ativo Detectado**\n\nDeseja a segunda via?`;
-                 return responder(res, 200, "Acuerdo Cache", "Acordo Cache", { existe_acordo: true }, mdES, mdPT);
+                 return responder(res, 200, "Acuerdo Cache", "Acordo detectado", { existe_acordo: true }, mdES, mdPT);
             }
 
             return logicMostrarOfertas(res, cachedUser);
@@ -596,6 +594,7 @@ app.post('/api/emitir-boleto', async (req, res) => {
     } catch (e) {
         query= await getFromCache(rawPhone)
         cpf= query.cpf
+        await updateGoogleSheet(rawPhone, userData.cpf_cnpj, "Tag Erro - API");
         await enviarReporteEmail(rawPhone,"Tag Erro - API",{cpf},e.message)
         handleApiError(res, e, "Error Boleto", "Erro Boleto");
     }
