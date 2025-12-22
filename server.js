@@ -592,6 +592,7 @@ app.post('/api/emitir-boleto', async (req, res) => {
         await logicEmitirBoletoNuevo(req, res, rawPhone, cachedUser);
 
     } catch (e) {
+        console.log("Entrando al error de la api de segunda via")
         query= await getFromCache(rawPhone)
         cpf= query.cpf
         await updateGoogleSheet(rawPhone, cpf, "Tag Erro - API");
