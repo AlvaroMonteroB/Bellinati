@@ -251,7 +251,7 @@ const responder = (res, statusCode, titleES, titlePT, rawData, mdES, mdPT) => {
 async function handleApiError(res, error, titleES, titlePT, extraData = {}) {
     console.error(`❌ [Error] ${titleES}:`, error.message);
     const statusCode = error.response ? error.response.status : 500;
-    responder(res, statusCode, titleES, titlePT, { error: error.message, ...extraData }, error.message, error.message);
+    responder(res, 200, titleES, titlePT, { error: error.message, ...extraData }, error.message, error.message);
     
 }
 
