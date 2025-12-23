@@ -382,7 +382,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
                             res, 
                             200, 
                             "Datos Incompletos", 
-                            "Transferência para Especialista", 
+                            "Credor não encontrado", 
                             { "tag": "Transbordo - Dados Incompletos" }, 
                             "Datos incompletos. Transfiriendo a humano (Horario: L-V 08:00-20:40, S 08:00-14:20).", 
                             "Para garantir a segurança e precisão na análise dos seus dados, vou direcionar seu atendimento para um especialista. Nosso time está disponível de segunda a sexta, das 08:00 às 20:40, e aos sábados, das 08:00 às 14:20. Se estivermos dentro do horário de atendimento, aguarde um momento."
