@@ -407,7 +407,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             await saveToCache(phone, cpf_cnpj, resCred.data, [], {}, tag, e.message);
             return responder(
                             res, 
-                            500, 
+                            200, 
                             "Error - Transferencia", 
                             "Erro Técnico - Transferência", 
                             { "tag": "Transbordo - Erro API" }, 
@@ -468,7 +468,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
                 await updateGoogleSheet(phone, cpf_cnpj, "Transbordo - Cliente sem opções de pagamento");
                 return responder(
                                 res, 
-                                500, 
+                                200, 
                                 "Sin Opciones de Pago", 
                                 "Sem Opções Automáticas", 
                                 { "tag": "Transbordo - Sem Opções" }, 
@@ -483,7 +483,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, {}, currentTag, e.message);
             return responder(
                             res, 
-                            500, 
+                            200, 
                             "Error Calculando Opciones", 
                             "Erro no Cálculo", 
                             { "tag": "Transbordo - Erro Calculo" }, 
@@ -516,7 +516,7 @@ app.post('/api/live-check', async (req, res) => {
     const { function_call_username, cpf_cnpj } = req.body;
     const rawPhone = function_call_username?.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
-    if (!cpf_cnpj) return responder(res, 400, "Falta CPF", "Falta CPF", {}, "Por favor envía tu CPF.", "Por favor envie seu CPF.");
+    if (!cpf_cnpj) return responder(res, 200, "Falta CPF", "Falta CPF", {}, "Por favor envía tu CPF.", "Por favor envie seu CPF.");
 
     try {
         const cachedUser = await getFromCache(rawPhone);
@@ -589,7 +589,7 @@ app.post('/api/transbordo', async (req, res) => {
         }
 
         // Verificación de Estado
-        if (!cachedUser) return responder(res, 404, "No encontrado", "Não encontrado", {}, "Datos no sync.", "Dados não sync.");
+        if (!cachedUser) return responder(res, 200, "No encontrado", "Não encontrado", {}, "Datos no sync.", "Dados não sync.");
 
         if (cachedUser.last_tag && cachedUser.last_tag.startsWith("Transbordo")) {
             await enviarReporteEmail(rawPhone, cachedUser.last_tag, { cpf_cnpj: cpf }, cachedUser.error_details);
@@ -609,12 +609,12 @@ app.post('/api/emitir-boleto', async (req, res) => {
 
     try {
         const cachedUser = await getFromCache(rawPhone);
-        if (!cachedUser) return responder(res, 404, "Sin Datos", "Sem Dados", {}, "Error datos.", "Erro dados.");
+        if (!cachedUser) return responder(res, 200, "Sin Datos", "Sem Dados", {}, "Error datos.", "Erro dados.");
 
         // A. SEGUNDA VÍA
         if (segunda_via) {
             const acordos = JSON.parse(cachedUser.acordos_json || '[]');
-            if (acordos.length === 0) return responder(res, 400, "Sin Acuerdo", "Sem Acordo", {}, "No hay acuerdo activo.", "Não há acordo ativo.");
+            if (acordos.length === 0) return responder(res, 200, "Sin Acuerdo", "Sem Acordo", {}, "No hay acuerdo activo.", "Não há acordo ativo.");
             
             const acordo = acordos[0];
             const token = await getAuthToken(cachedUser.cpf);
@@ -750,7 +750,7 @@ async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
         if (opt) targetOp = opcoes[parseInt(opt) - 1];
         else if (Parcelas) targetOp = opcoes.find(o => o.qtdParcelas == Parcelas);
 
-        if (!targetOp) return responder(res, 400, "Inválido", "Inválido", {}, "Opción inválida.", "Opção inválida.");
+        if (!targetOp) return responder(res, 200, "Inválido", "Inválido", {}, "Opción inválida.", "Opção inválida.");
 
         const token = await getAuthToken(cachedUser.cpf);
         const credoresData = JSON.parse(cachedUser.credores_json);
