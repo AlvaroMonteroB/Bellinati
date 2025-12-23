@@ -244,7 +244,7 @@ const responder = (res, statusCode, titleES, titlePT, rawData, mdES, mdPT) => {
         raw: { status: statusCode >= 400 ? 'error' : 'exito', ...rawData },
         markdown: `**${titleES}**\n\n${messageES}`,
         type: "markdown",
-        desc: `**${titlePT}**\n\n${messagePT}`
+        desc: `${messagePT}`
     });
 };
 
