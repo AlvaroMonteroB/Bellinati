@@ -470,7 +470,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
                                 res, 
                                 200, 
                                 "Sin Opciones de Pago", 
-                                "Sem Opções Automáticas", 
+                                "Sem Opções de pagamento", 
                                 { "tag": "Transbordo - Sem Opções" }, 
                                 "No se encontraron opciones de pago. Se transfiere a humano según disponibilidad.", 
                                 "Não encontrei propostas de negociação automática disponíveis para o seu caso neste momento. Por isso, vou transferir você para o atendimento humano. Caso um de nossos especialistas esteja livre agora (dentro do horário: Seg a Sex 08:00-20:40, Sáb 08:00-14:20), ele dará continuidade ao seu atendimento."
