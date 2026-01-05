@@ -214,25 +214,15 @@ const autoMailer = axios.create({ baseURL: "https://auto-mailer-delta.vercel.app
 
 "+525510609610": { "cpf_cnpj": "02637364238", "nombre": "Usuario Default" },
 "788324039": { "cpf_cnpj": "788324039", "nombre": "Usuario Test 1" },
-  "357155106": { "cpf_cnpj": "357155106", "nombre": "Usuario Test 2" },
+  "00357155106": { "cpf_cnpj": "00357155106", "nombre": "Usuario Test 2" },
   "432206906": { "cpf_cnpj": "432206906", "nombre": "Usuario Test 3" },
   "1012234983": { "cpf_cnpj": "1012234983", "nombre": "Usuario Test 4" },
-  "489302610": { "cpf_cnpj": "489302610", "nombre": "Usuario Test 5" },
-  "1751211509": { "cpf_cnpj": "1751211509", "nombre": "Usuario Test 6" },
+  "489302610": { "cpf_cnpj": "00489302610", "nombre": "Usuario Test 5" },
+  "01751211509": { "cpf_cnpj": "1751211509", "nombre": "Usuario Test 6" },
   "2505540543": { "cpf_cnpj": "2505540543", "nombre": "Usuario Test 7" },
   "3266177797": { "cpf_cnpj": "3266177797", "nombre": "Usuario Test 8" },
   "4957486921": { "cpf_cnpj": "4957486921", "nombre": "Usuario Test 9" },
   "7651663721": { "cpf_cnpj": "7651663721", "nombre": "Usuario Test 10" },
-  "788324039": { "cpf_cnpj": "788324039", "nombre": "Usuario Test 11" },
-  "357155106": { "cpf_cnpj": "357155106", "nombre": "Usuario Test 12" },
-  "432206906": { "cpf_cnpj": "432206906", "nombre": "Usuario Test 13" },
-  "1012234983": { "cpf_cnpj": "1012234983", "nombre": "Usuario Test 14" },
-  "489302610": { "cpf_cnpj": "489302610", "nombre": "Usuario Test 15" },
-  "1751211509": { "cpf_cnpj": "1751211509", "nombre": "Usuario Test 16" },
-  "2505540543": { "cpf_cnpj": "2505540543", "nombre": "Usuario Test 17" },
-  "3266177797": { "cpf_cnpj": "3266177797", "nombre": "Usuario Test 18" },
-  "4957486921": { "cpf_cnpj": "4957486921", "nombre": "Usuario Test 19" },
-  "7651663721": { "cpf_cnpj": "7651663721", "nombre": "Usuario Test 20" }
 
 }; 
 
@@ -581,7 +571,7 @@ app.post('/api/transbordo', async (req, res) => {
                             res, 
                             200, 
                             "Transferencia Solicitada", 
-                            "Transferência Solicitada", 
+                            "", 
                             { received: true, tag }, 
                             "Usuario solicitó humano. Transfiriendo según horario y disponibilidad.", 
                             "Compreendo. Vou direcionar seu atendimento para um de nossos especialistas. Caso um atendente esteja livre (dentro do horário: Seg a Sex 08:00-20:40, Sáb 08:00-14:20), ele dará continuidade à sua solicitação por aqui."
@@ -640,8 +630,8 @@ app.post('/api/emitir-boleto', async (req, res) => {
             if (!res2Via.data.sucesso) throw new Error(res2Via.data.msgRetorno || "Error 2a Via");
 
             const boleto = res2Via.data;
-            const mdES = `✅ **Segunda Vía Emitida**\n\n📄 Línea: \`${boleto.linhaDigitavel}\`\n💰 Valor: R$ ${boleto.valorTotal}`;
-            const mdPT = `✅ **Segunda Via Emitida**\n\n📄 Linha: \`${boleto.linhaDigitavel}\`\n💰 Valor: R$ ${boleto.valorTotal}`;
+            const mdES = `✅ 📄 Línea: \`${boleto.linhaDigitavel}\`\n💰 Valor: R$ ${boleto.valorTotal}`;
+            const mdPT = `✅ \n\n📄 Linha: \`${boleto.linhaDigitavel}\`\n💰 Valor: R$ ${boleto.valorTotal}`;
             
             await updateGoogleSheet(rawPhone, cachedUser.cpf, "BOT_BOLETO_GERADO");
             return responder(res, 200, "2a Via OK", "2a Via OK", boleto, mdES, mdPT);
