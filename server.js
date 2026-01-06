@@ -326,7 +326,7 @@ async function procesarYGuardarUsuario(phone, userData) {
         try {
             const resSimul = await apiNegocie.post('/api/v5/busca-opcao-pagamento', {
                 Crm: credor.crms[0], Carteira: carteiraId, Contratos: contratosDocs,
-                DataVencimento: null, ValorEntrada: 0, QuantidadeParcela: 0, ValorParcela: 0
+                DataVencimento: null, ValorEntrada: 0, QuantidadeParcela: null, ValorParcela: 0
             }, { headers: { 'Authorization': `Bearer ${token}` } });
 
             simulacionData = resSimul.data;
@@ -448,7 +448,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
         try {
             const resSim = await apiNegocie.post('/api/v5/busca-opcao-pagamento', {
                 Crm: credor.crms[0], Carteira: carteiraId, Contratos: contratosDocs,
-                DataVencimento: null, ValorEntrada: 0, QuantidadeParcela: 0, ValorParcela: 0
+                DataVencimento: null, ValorEntrada: 0, QuantidadeParcela: null, ValorParcela: 0
             }, { headers: { 'Authorization': `Bearer ${token}` } });
             
             simulacionData = resSim.data;
