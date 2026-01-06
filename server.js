@@ -371,10 +371,10 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             return responder(
                             res, 
                             200, 
-                            "Datos Incompletos", 
+                            "deudor no encontrado", 
                             "Credor não encontrado", 
                             { "tag": "Transbordo - Dados Incompletos" }, 
-                            "Datos incompletos. Transfiriendo a humano (Horario: L-V 08:00-20:40, S 08:00-14:20).", 
+                            "Credor não encontrado. Transfiriendo a humano (Horario: L-V 08:00-20:40, S 08:00-14:20).", 
                             "Para garantir a segurança e precisão na análise dos seus dados, vou direcionar seu atendimento para um especialista. Nosso time está disponível de segunda a sexta, das 08:00 às 20:40, e aos sábados, das 08:00 às 14:20. Se estivermos dentro do horário de atendimento, aguarde um momento."
                             );
         }
@@ -427,7 +427,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, {}, tag, null, acordosData);
 
             const mdES = `⚠️ **¡Ya tienes un acuerdo activo!**\n\n- Valor: R$ ${activeAgreement.valor}\n- Vencimiento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**¿Deseas emitir la segunda vía del boleto?** (Responde 'Sí' o 'Segunda Via')`;
-            const mdPT = `⚠️ **Você já possui um acordo ativo!**\n\n- Valor: R$ ${activeAgreement.valor}\n- Vencimento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**Deseja emitir a segunda via do boleto?** (Responda 'Sim' ou 'Segunda Via')`;
+            const mdPT = `⚠️ Você já possui um acordo ativo!\n- Valor: R$ ${activeAgreement.valor}\n- Vencimento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**Deseja emitir a segunda via do boleto?** (Responda 'Sim' ou 'Segunda Via')`;
             
             return responder(res, 200, "Acuerdo Encontrado", "Acordo Encontrado", { 
                 existe_acordo: true, 
@@ -710,8 +710,8 @@ async function logicMostrarOfertas(res, cachedUser) {
     const sim = JSON.parse(cachedUser.simulacion_json || '{}');
     const opcoes = sim.opcoesPagamento || [];
 
-    let mdES = `**Hola.** Estado de cuenta:\n\n`;
-    let mdPT = `**Olá.** Extrato:\n\n`;
+    let mdES = `Estado de cuenta:\n\n`;
+    let mdPT = `Extrato:\n\n`;
 
     dividas.forEach(d => {
         mdES += `- R$ ${d.valor} (Contrato: ${d.contratos?.[0]?.numero})\n`;
@@ -719,7 +719,7 @@ async function logicMostrarOfertas(res, cachedUser) {
     });
 
     if (opcoes.length > 0) {
-        mdES += `\n**Opciones:**\n`; mdPT += `\n**Opções:**\n`;
+        mdES += `\n**Opciones:**\n`; mdPT += ``;
         opcoes.forEach((op, i) => {
             const val = op.valorTotalComCustas || op.valor;
             mdES += `${i + 1}. ${op.texto} (R$ ${val})\n`;
@@ -778,8 +778,9 @@ async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
         await updateGoogleSheet(phone, cachedUser.cpf, "BOT_BOLETO_GERADO");
         const boleto = resEmitir.data;
         
-        const mdES = `✅ **Boleto Generado**\nCode: \`${boleto.linhaDigitavel}\`\nValor: R$ ${boleto.valorTotal}`;
-        const mdPT = `✅ **Boleto Gerado**\nLinha: \`${boleto.linhaDigitavel}\`\nValor: R$ ${boleto.valorTotal}`;
+        const mdES = `✅ Code: \`${boleto.linhaDigitavel}\`\nValor: R$ ${boleto.valorTotal}`;
+        const mdPT = `✅ Linha: \`${boleto.linhaDigitavel}\`\nValor: R$ ${boleto.valorTotal}`;
+        
         responder(res, 200, "Boleto", "Boleto", boleto, mdES, mdPT);
 
     } catch (error) {
@@ -792,3 +793,7 @@ async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
 
 app.listen(PORT, HOST, () => console.log(`Server running on ${HOST}:${PORT}`));
 
+
+    
+    //00109396103
+    
