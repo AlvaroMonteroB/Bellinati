@@ -104,6 +104,8 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS user_cache (
         phone TEXT PRIMARY KEY, 
         cpf TEXT, 
+        nome TEXT,
+        contrato TEXT,
         credores_json TEXT, 
         dividas_json TEXT,
         simulacion_json TEXT, 
@@ -117,18 +119,29 @@ db.serialize(() => {
     db.run("ALTER TABLE user_cache ADD COLUMN acordos_json TEXT", (err) => {
         // Ignorar error si la columna ya existe
     });
+
+    db.run("ALTER TABLE user_cache ADD COLUMN contrato TEXT", (err) => {
+        // Ignorar error si la columna ya existe
+    });
+
+    db.run("ALTER TABLE user_cache ADD COLUMN nome TEXT", (err) => {
+        // Ignoramos el error si la columna ya existe
+    });
 });
 
 // Función unificada para guardar en DB y actualizar Sheet
-function saveToCache(phone, cpf, credores, dividas, simulacion, tag, errorDetails = null, acordos = null) {
+function saveToCache(phone, cpf, nome, contrato,credores, dividas, simulacion, tag, errorDetails = null, acordos = null) {
     return new Promise((resolve, reject) => {
+        // Actualizamos la query SQL para incluir 'nome'
         const stmt = db.prepare(`INSERT OR REPLACE INTO user_cache 
-            (phone, cpf, credores_json, dividas_json, simulacion_json, acordos_json, last_updated, last_tag, error_details)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`);
+            (phone, cpf, nome, contrato, credores_json, dividas_json, simulacion_json, acordos_json, last_updated, last_tag, error_details)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`);
         
         stmt.run(
             phone, 
             cpf, 
+            nome || null, // Guardamos el nombre o null si no existe
+            contrato || null,
             JSON.stringify(credores || {}), 
             JSON.stringify(dividas || []),
             JSON.stringify(simulacion || {}), 
@@ -138,7 +151,6 @@ function saveToCache(phone, cpf, credores, dividas, simulacion, tag, errorDetail
             async (err) => {
                 if (err) reject(err);
                 else {
-                    // Fuego y olvido: Actualizamos el Sheet en segundo plano
                     updateGoogleSheet(phone, cpf, tag).catch(e => console.error("Sheet Async Err:", e));
                     resolve();
                 }
@@ -283,7 +295,7 @@ async function procesarYGuardarUsuario(phone, userData) {
             token = await getAuthToken(userData.cpf_cnpj);
         } catch (e) {
             const tag = "Transbordo - Usuário não identificado";
-            await saveToCache(phone, userData.cpf_cnpj, {}, [], {}, tag, e.message);
+            await saveToCache(phone, userData.cpf_cnpj,null,null,null, {}, [], {}, tag, e.message);
             return false;
         }
 
@@ -291,7 +303,7 @@ async function procesarYGuardarUsuario(phone, userData) {
         const resCredores = await apiNegocie.get('/api/v5/busca-credores', { headers: { 'Authorization': `Bearer ${token}` } });
         if (!resCredores.data.credores?.length) {
             const tag = "Transbordo - Credor não encontrado";
-            await saveToCache(phone, userData.cpf_cnpj, resCredores.data, [], {}, tag);
+            await saveToCache(phone, userData.cpf_cnpj,resCredores.data.nome,null, resCredores.data, [], {}, tag);
             return true;
         }
 
@@ -311,7 +323,7 @@ async function procesarYGuardarUsuario(phone, userData) {
             await updateGoogleSheet(phone, userData.cpf_cnpj, "Tag lista dívida");
         } catch (e) {
             const tag = "Transbordo - Listar dividas - Erro";
-            await saveToCache(phone, userData.cpf_cnpj, resCredores.data, [], {}, tag, e.message);
+            await saveToCache(phone, userData.cpf_cnpj,resCredores.nome,dividasData.data[0].numero, resCredores.data, [], {}, tag, e.message);
             return false;
         }
 
@@ -337,12 +349,12 @@ async function procesarYGuardarUsuario(phone, userData) {
             }
         } catch (e) {
             currentTag = "Transbordo - Busca Opções de Pagamento - Erro";
-            await saveToCache(phone, userData.cpf_cnpj, resCredores.data, dividasData, {}, currentTag, e.message);
+            await saveToCache(phone, userData.cpf_cnpj,resCredores.nome,contratosDocs[0], resCredores.data, dividasData, {}, currentTag, e.message);
             return false;
         }
 
         // Guardamos todo en caché
-        await saveToCache(phone, userData.cpf_cnpj, resCredores.data, dividasData, simulacionData, currentTag);
+        await saveToCache(phone, userData.cpf_cnpj,resCredores.nome,contratosDocs[0], resCredores.data, dividasData, simulacionData, currentTag);
         return true;
     } catch (error) {
         console.error(`❌ Fatal sync error ${phone}:`, error.message);
@@ -364,9 +376,10 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
         
         // 1. Credores
         const resCred = await apiNegocie.get('/api/v5/busca-credores', { headers: { 'Authorization': `Bearer ${token}` } });
+        const nombreCliente = resCred.data.nome || null;
         if (!resCred.data.credores?.length) {
             const tag = "Transbordo - Credor não encontrado";
-            await saveToCache(phone, cpf_cnpj, resCred.data, [], {}, tag);
+            await saveToCache(phone, cpf_cnpj,nombreCliente,null, resCred.data, [], {}, tag);
             await updateGoogleSheet(phone,cpf_cnpj,tag)
             return responder(
                             res, 
@@ -394,7 +407,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             await updateGoogleSheet(phone, cpf_cnpj, "Tag lista dívida");
         } catch (e) {
             const tag = "Transbordo - Listar dividas - Erro";
-            await saveToCache(phone, cpf_cnpj, resCred.data, [], {}, tag, e.message);
+            await saveToCache(phone, cpf_cnpj,nombreCliente,dividasData.data[0].numero, resCred.data, [], {}, tag, e.message);
             return responder(
                             res, 
                             200, 
@@ -417,6 +430,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
         } catch (e) {
             console.log("⚠️ Sin acuerdos o error no crítico en busca-acordo");
         }
+        contrato=acordosData.contrato.data[0].numero
 
         // --- ESCENARIO A: YA TIENE ACUERDO ---
         if (acordosData && acordosData.length > 0) {
@@ -424,10 +438,10 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             const tag = "Acordo Existente Encontrado";
             
             // Guardamos todo en cache (incluyendo acuerdos)
-            await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, {}, tag, null, acordosData);
+            await saveToCache(phone, cpf_cnpj, nombreCliente,contrato,resCred.data, dividasData, {}, tag, null, acordosData);
 
             const mdES = `⚠️ **¡Ya tienes un acuerdo activo!**\n\n- Valor: R$ ${activeAgreement.valor}\n- Vencimiento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**¿Deseas emitir la segunda vía del boleto?** (Responde 'Sí' o 'Segunda Via')`;
-            const mdPT = `⚠️ Você já possui um acordo ativo!\n- Valor: R$ ${activeAgreement.valor}\n- Vencimento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**Deseja emitir a segunda via do boleto?** (Responda 'Sim' ou 'Segunda Via')`;
+            const mdPT = `⚠️ Obrigada pela confirmação, ${nombreCliente}!\n Encontrei uma ótima oferta para negociar sua pendência\nNúmero do contrato: ${contrato}\n Valor: R$ ${activeAgreement.valor}\n- Vencimento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**Deseja emitir a segunda via do boleto?** (Responda 'Sim' ou 'Segunda Via')`;
             
             return responder(res, 200, "Acuerdo Encontrado", "Acordo Encontrado", { 
                 existe_acordo: true, 
@@ -485,7 +499,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
         await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, simulacionData, currentTag);
         
         return logicMostrarOfertas(res, { 
-            dividas_json: JSON.stringify(dividasData), 
+            dividas_json: JSON.stringify(dividasData), //Cambiar aqui
             simulacion_json: JSON.stringify(simulacionData) 
         });
 
@@ -533,7 +547,7 @@ app.post('/api/live-check', async (req, res) => {
                  
                  // Construimos el mensaje detallado igual que en Live Check
                  const mdES = `⚠️ **¡Ya tienes un acuerdo activo!**\n\n- Valor: R$ ${activeAgreement.valor}\n- Vencimiento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**¿Deseas emitir la segunda vía del boleto?** (Responde 'Sí' o 'Segunda Via')`;
-                 const mdPT = `⚠️ **Você já possui um acordo ativo!**\n\n- Valor: R$ ${activeAgreement.valor}\n- Vencimento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**Deseja emitir a segunda via do boleto?** (Responda 'Sim' ou 'Segunda Via')`;
+                 const mdPT = `⚠️ Obrigada pela confirmação ${cachedUser.nome}\nEncontrei uma ótima oferta para negociar sua pendência:\n- Valor: R$ ${activeAgreement.valor}\n- Vencimento: ${activeAgreement.parcelas?.[0]?.dataVencimento}\n\n**Deseja emitir a segunda via do boleto?** (Responda 'Sim' ou 'Segunda Via')`;
                  
                  return responder(res, 200, "Acuerdo Encontrado", "Acordo Encontrado", { 
                      existe_acordo: true, 
@@ -787,7 +801,7 @@ async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
         const tag = "Transbordo - Erro emissão de boleto";
         await enviarReporteEmail(phone, tag, { cpf_cnpj: cachedUser.cpf }, error.message);
         await saveToCache(phone, cachedUser.cpf, {}, [], {}, tag, error.message);
-        responder(res, 500, "Error Emisión", "Erro Emissão", { transbordo: true }, "Error técnico.", "Erro técnico.");
+        responder(res, 200, "Error Emisión", "Erro Emissão", { transbordo: true }, "Error técnico.", "Erro técnico.");
     }
 }
 
