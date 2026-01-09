@@ -9,6 +9,7 @@ const sqlite3 = require('sqlite3').verbose();
 const nodemailer = require('nodemailer');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
+const { time } = require('console');
 
 const app = express();
 app.use(express.json());
@@ -135,19 +136,19 @@ function saveToCache(phone, cpf, nome, contrato,credores, dividas, simulacion, t
         // Actualizamos la query SQL para incluir 'nome'
         const stmt = db.prepare(`INSERT OR REPLACE INTO user_cache 
             (phone, cpf, nome, contrato, credores_json, dividas_json, simulacion_json, acordos_json, last_updated, last_tag, error_details)
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`);
         
         stmt.run(
-            phone, 
-            cpf, 
-            nome || null, // Guardamos el nombre o null si no existe
-            contrato || null,
-            JSON.stringify(credores || {}), 
-            JSON.stringify(dividas || []),
-            JSON.stringify(simulacion || {}), 
-            JSON.stringify(acordos || []), 
-            tag, 
-            errorDetails, 
+            phone,                          // 1
+            cpf,                            // 2
+            nome || null,                   // 3
+            contrato || null,               // 4
+            JSON.stringify(credores || {}), // 5
+            JSON.stringify(dividas || []),  // 6
+            JSON.stringify(simulacion || {}), // 7
+            JSON.stringify(acordos || []),    // 8 (Este es el que faltaba en el VALUES)
+            tag,                            // 9
+            errorDetails,                   // 10
             async (err) => {
                 if (err) reject(err);
                 else {
