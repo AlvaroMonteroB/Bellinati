@@ -408,7 +408,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             await updateGoogleSheet(phone, cpf_cnpj, "Tag lista dívida");
         } catch (e) {
             const tag = "Transbordo - Listar dividas - Erro";
-            await saveToCache(phone, cpf_cnpj,nombreCliente,dividasData.data[0].numero, resCred.data, [], {}, tag, e.message);
+            await saveToCache(phone, cpf_cnpj,nombreCliente,dividasData[0].numero, resCred.data, [], {}, tag, e.message);
             return responder(
                             res, 
                             200, 
@@ -431,7 +431,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
         } catch (e) {
             console.log("⚠️ Sin acuerdos o error no crítico en busca-acordo");
         }
-        contrato=acordosData.contrato.data[0].numero
+        contrato=acordosData[0].contrato[0].numero
 
         // --- ESCENARIO A: YA TIENE ACUERDO ---
         if (acordosData && acordosData.length > 0) {
