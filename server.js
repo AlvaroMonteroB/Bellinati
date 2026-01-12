@@ -734,7 +734,7 @@ async function logicMostrarOfertas(res, cachedUser) {
     });
 
     if (opcoes.length > 0) {
-        mdES += `\n**Opciones:**\n`; mdPT += ``;
+        mdES += `\n**Opciones:**\n`; mdPT += `Obrigada pela confirmação, ${cachedUser.nome}! Encontrei uma ótima oferta para negociar sua pendência`;
         opcoes.forEach((op, i) => {
             const val = op.valorTotalComCustas || op.valor;
             mdES += `${i + 1}. ${op.texto} (R$ ${val})\n`;
