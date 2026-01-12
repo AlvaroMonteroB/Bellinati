@@ -431,13 +431,14 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
         } catch (e) {
             console.log("⚠️ Sin acuerdos o error no crítico en busca-acordo");
         }
-        contrato=acordosData[0].contrato[0].numero
+        let contrato=null
+        
 
         // --- ESCENARIO A: YA TIENE ACUERDO ---
         if (acordosData && acordosData.length > 0) {
             const activeAgreement = acordosData[0];
             const tag = "Acordo Existente Encontrado";
-            
+            contrato = activeAgreement.contrato?.[0]?.numero;
             // Guardamos todo en cache (incluyendo acuerdos)
             await saveToCache(phone, cpf_cnpj, nombreCliente,contrato,resCred.data, dividasData, {}, tag, null, acordosData);
 
