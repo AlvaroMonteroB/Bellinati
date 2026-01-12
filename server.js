@@ -728,12 +728,13 @@ async function logicMostrarOfertas(res, cachedUser) {
     const opcoes = sim.opcoesPagamento || [];
 
     let mdES = `Estado de cuenta:\n\n`;
-    let mdPT = `Extrato:\n\n`;
+    let mdPT = ``;
 
-    
+    mdES += `\n**Opciones:**\n`;
+    mdPT += `Obrigada pela confirmação, ${cachedUser.nome}! Encontrei uma ótima oferta para negociar sua pendência`;
+
 
     if (opcoes.length > 0) {
-        mdES += `\n**Opciones:**\n`; mdPT += `Obrigada pela confirmação, ${cachedUser.nome}! Encontrei uma ótima oferta para negociar sua pendência`;
         dividas.forEach(d => {
         mdES += `- R$ ${d.valor} (Contrato: ${d.contratos?.[0]?.numero})\n`;
         mdPT += `- R$ ${d.valor} (Contrato: ${d.contratos?.[0]?.numero})\n`;
