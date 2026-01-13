@@ -611,7 +611,7 @@ app.post('/api/transbordo', async (req, res) => {
 
 // 3. EMITIR BOLETO (Nueva y Segunda Vía)
 app.post('/api/emitir-boleto', async (req, res) => {
-    const { function_call_username, opt, Parcelas, segunda_via } = req.body;
+    const { function_call_username, opt, Parcelas, segunda_via, dataVencimentoPrimeiraParcela } = req.body;
     const rawPhone = function_call_username?.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
     try {
@@ -773,11 +773,11 @@ async function logicMostrarOfertas(res, cachedUser) {
 }
 
 async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
-    const { opt, Parcelas } = req.body;
+    const { opt, Parcelas, dataVencimentoPrimeiraParcela } = req.body;
     try {
         const simCache = JSON.parse(cachedUser.simulacion_json);
         const opcoes = simCache.opcoesPagamento || [];
-        
+        console.log(req.body)
         let targetOp;
         if (opt) targetOp = opcoes[parseInt(opt) - 1];
         else if (Parcelas) targetOp = opcoes.find(o => o.qtdParcelas == Parcelas);
@@ -793,7 +793,7 @@ async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
         // Re-simular para obtener ID fresco
         const resReSimul = await apiNegocie.post('/api/v5/busca-opcao-pagamento', {
             Crm: credor.crms[0], Carteira: carteiraId, Contratos: contratos,
-            DataVencimento: null, ValorEntrada: 0, QuantidadeParcela: targetOp.qtdParcelas, ValorParcela: 0
+            DataVencimento: dataVencimentoPrimeiraParcela, ValorEntrada: 0, QuantidadeParcela: targetOp.qtdParcelas, ValorParcela: 0
         }, { headers: { 'Authorization': `Bearer ${token}` } });
 
         const freshOp = resReSimul.data.opcoesPagamento?.find(o => o.qtdParcelas == targetOp.qtdParcelas);
