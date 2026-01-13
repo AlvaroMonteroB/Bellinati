@@ -486,7 +486,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             }
         } catch (e) {
             currentTag = "Transbordo - Busca Opções de Pagamento - Erro";
-            await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, {}, currentTag, e.message);
+            await saveToCache(phone, cpf_cnpj, nombreCliente, contratosDocs[0], resCred.data, dividasData, {}, currentTag, e.message);
             return responder(
                             res, 
                             200, 
@@ -498,7 +498,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
                             );
         }
 
-        await saveToCache(phone, cpf_cnpj, resCred.data, dividasData, simulacionData, currentTag);
+        await saveToCache(phone, cpf_cnpj, nombreCliente, contratosDocs[0], resCred.data, dividasData, simulacionData, currentTag);
         
         return logicMostrarOfertas(res, { 
             dividas_json: JSON.stringify(dividasData), //Cambiar aqui
@@ -731,7 +731,7 @@ async function logicMostrarOfertas(res, cachedUser) {
     let mdPT = ``;
 
     mdES += `\n**Opciones:**\n`;
-    mdPT += `Obrigada pela confirmação, ${cachedUser.nome}! Encontrei uma ótima oferta para negociar sua pendência`;
+     mdPT += `Obrigada pela confirmação, ${cachedUser.nome}! Encontrei uma ótima oferta para negociar sua pendência`;
 
 
     if (opcoes.length > 0) {
