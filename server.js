@@ -324,7 +324,7 @@ async function procesarYGuardarUsuario(phone, userData) {
             await updateGoogleSheet(phone, userData.cpf_cnpj, "Tag lista dívida");
         } catch (e) {
             const tag = "Transbordo - Listar dividas - Erro";
-            await saveToCache(phone, userData.cpf_cnpj,resCredores.nome,dividasData.data[0].numero, resCredores.data, [], {}, tag, e.message);
+            await saveToCache(phone, userData.cpf_cnpj,resCredores.data.nome,dividasData.data[0].numero, resCredores.data, [], {}, tag, e.message);
             return false;
         }
 
@@ -726,19 +726,42 @@ async function logicMostrarOfertas(res, cachedUser) {
     const dividas = JSON.parse(cachedUser.dividas_json || '[]');
     const sim = JSON.parse(cachedUser.simulacion_json || '{}');
     const opcoes = sim.opcoesPagamento || [];
+    
+    // 1. Extraemos la lista de fechas. Según el PDF, es un array de strings [cite: 520, 522]
+    // Formateamos las fechas para que sean legibles (DD/MM/YYYY) quitando la parte de la hora "T00:00:00"
+    const fechasVencimiento = (sim.listaDataVencimento || [])
+        .map(fecha => {
+            if(!fecha) return null;
+            const [datePart] = fecha.split('T'); // Toma "2024-07-25" de "2024-07-25T00:00:00"
+            const [year, month, day] = datePart.split('-');
+            return `${day}/${month}/${year}`;
+        })
+        .filter(Boolean) // Elimina nulos si los hubiera
+        .join(', ');
 
     let mdES = `Estado de cuenta:\n\n`;
     let mdPT = ``;
 
-    mdES += `\n**Opciones:**\n`;
-     mdPT += `Obrigada pela confirmação, ${cachedUser.nome}! Encontrei uma ótima oferta para negociar sua pendência`;
+    // Sección de Deudas
+    if (dividas.length > 0) {
+         dividas.forEach(d => {
+            // Usamos d.valor y d.contratos[0].numero [cite: 157, 178]
+            const numContrato = d.contratos?.[0]?.numero || d.numero || 'N/A';
+            mdES += `- R$ ${d.valor} (Contrato: ${numContrato})\n`;
+            mdPT += `- R$ ${d.valor} (Contrato: ${numContrato})\n`;
+        });
+    }
 
+    // 2. Agregamos las fechas de vencimiento al mensaje si existen
+    if (fechasVencimiento.length > 0) {
+        mdES += `\n📅 **Fechas de vencimiento disponibles:** ${fechasVencimiento}\n`;
+        mdPT += `\n📅 **Datas de vencimento disponíveis:** ${fechasVencimiento}\n`;
+    }
+
+    mdES += `\n**Opciones:**\n`;
+    mdPT += `\nObrigada pela confirmação, ${cachedUser.nome ? cachedUser.nome.replace(/"/g, '') : ''}! Encontrei uma ótima oferta para negociar sua pendência\n\n**Opções:**\n`;
 
     if (opcoes.length > 0) {
-        dividas.forEach(d => {
-        mdES += `- R$ ${d.valor} (Contrato: ${d.contratos?.[0]?.numero})\n`;
-        mdPT += `- R$ ${d.valor} (Contrato: ${d.contratos?.[0]?.numero})\n`;
-    });
         opcoes.forEach((op, i) => {
             const val = op.valorTotalComCustas || op.valor;
             mdES += `${i + 1}. ${op.texto} (R$ ${val})\n`;
@@ -746,7 +769,7 @@ async function logicMostrarOfertas(res, cachedUser) {
         });
     }
 
-    responder(res, 200, "Ofertas", "Ofertas", { dividas, opcoes }, mdES, mdPT);
+    responder(res, 200, "Ofertas", "Ofertas", { dividas, opcoes, fechas_vencimiento: sim.listaDataVencimento }, mdES, mdPT);
 }
 
 async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
