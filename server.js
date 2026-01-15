@@ -408,7 +408,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
             await updateGoogleSheet(phone, cpf_cnpj, "Tag lista dívida");
         } catch (e) {
             const tag = "Transbordo - Listar dividas - Erro";
-            await saveToCache(phone, cpf_cnpj,nombreCliente,dividasData[0].numero, resCred.data, [], {}, tag, e.message);
+            await saveToCache(phone, cpf_cnpj,nombreCliente,null, resCred.data, [], {}, tag, e.message);
             return responder(
                             res, 
                             200, 
@@ -718,12 +718,28 @@ app.post('/api/admin/sync', async (req, res) => {
         // Pequeña pausa para no saturar
         await new Promise(r => setTimeout(r, 500));
     }
+    await send_template()
     console.log("🏁 Sync Finalizado.");
 });
+
+// --- logica de envio de mensajes masivos ---
+async function send_template(phone_numbers_database){
+    console.log("Enviando mensajes");
+}
+
+
 
 // --- LOGICA DE RESPUESTA & EMISIÓN NUEVA ---
 async function logicMostrarOfertas(res, cachedUser) {
     const dividas = JSON.parse(cachedUser.dividas_json || '[]');
+    try{
+    if(!Array.isArray(dividas) && (dividas && typeof dividas=='object')){
+        dividas=[dividas]
+    }}
+    catch(e){
+        console.error("⚠️ Error parseando JSON de dividas:", e.message);
+        dividas = [];
+    }
     const sim = JSON.parse(cachedUser.simulacion_json || '{}');
     const opcoes = sim.opcoesPagamento || [];
     
