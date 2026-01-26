@@ -101,6 +101,7 @@ const db = new sqlite3.Database('./cache_negociacion.db');
 
 db.serialize(() => {
     db.run("PRAGMA journal_mode = WAL;");
+    db.run("PRAGMA foreign_keys = ON;")
     // Tabla completa con acordos_json
     db.run(`CREATE TABLE IF NOT EXISTS user_cache (
         phone TEXT PRIMARY KEY, 
@@ -115,6 +116,8 @@ db.serialize(() => {
         last_tag TEXT, 
         error_details TEXT
     )`);
+
+
     
     // Migración segura: Intenta agregar la columna 'acordos_json' si no existe
     db.run("ALTER TABLE user_cache ADD COLUMN acordos_json TEXT", (err) => {
@@ -124,6 +127,7 @@ db.serialize(() => {
     db.run("ALTER TABLE user_cache ADD COLUMN contrato TEXT", (err) => {
         // Ignorar error si la columna ya existe
     });
+    
 
     db.run("ALTER TABLE user_cache ADD COLUMN nome TEXT", (err) => {
         // Ignoramos el error si la columna ya existe
@@ -366,7 +370,7 @@ async function procesarYGuardarUsuario(phone, userData) {
 // ==========================================
 // 🚀 LOGICA EN VIVO (LIVE CHECK)
 // ==========================================
-async function logicLiveCheck(res, phone, cpf_cnpj) {
+async function logicLiveCheck(res, phone, cpf_cnpj,try_cpf,opt) {
     console.log(`📡 Live Check para ${phone} (${cpf_cnpj})`);
     
     // Tag Inicial en Excel
@@ -374,6 +378,10 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
 
     try {
         const token = await getAuthToken(cpf_cnpj);
+        let number=+try_cpf
+        if (number>3 && token==null){
+            return responder(res,200,"","",{},"Por favor escribe un cpf valido","Por favor, insira um número CPF válido.");
+        }
         
         // 1. Credores
         const resCred = await apiNegocie.get('/api/v5/busca-credores', { headers: { 'Authorization': `Bearer ${token}` } });
@@ -500,7 +508,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
 
         await saveToCache(phone, cpf_cnpj, nombreCliente, contratosDocs[0], resCred.data, dividasData, simulacionData, currentTag);
         
-        return logicMostrarOfertas(res, { 
+        return logicMostrarOfertas(opt,res, { 
             dividas_json: JSON.stringify(dividasData), //Cambiar aqui
             simulacion_json: JSON.stringify(simulacionData),
             nome:JSON.stringify(nombreCliente) 
@@ -520,13 +528,14 @@ async function logicLiveCheck(res, phone, cpf_cnpj) {
 
 // 1. LIVE CHECK (Entrada Principal para nuevos usuarios)
 app.post('/api/live-check', async (req, res) => {
-    const { function_call_username, cpf_cnpj } = req.body;
+    const { function_call_username, cpf_cnpj,try_cpf, opt } = req.body;
     const rawPhone = function_call_username?.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
     if (!cpf_cnpj) return responder(res, 200, "Falta CPF", "Falta CPF", {}, "Por favor envía tu CPF.", "Por favor envie seu CPF.");
 
     try {
         const cachedUser = await getFromCache(rawPhone);
+        
         
         // A. SI YA EXISTE EN CACHE Y CPF COINCIDE -> USAR CACHE
         if (cachedUser && cachedUser.cpf === cpf_cnpj) {
@@ -562,7 +571,7 @@ app.post('/api/live-check', async (req, res) => {
         }
 
         // B. SI NO EXISTE -> LLAMADA EN VIVO
-        await logicLiveCheck(res, rawPhone, cpf_cnpj);
+        await logicLiveCheck(res, rawPhone, cpf_cnpj,try_cpf,opt);
 
     } catch (e) {
         await enviarReporteEmail(rawPhone,"Tag Erro - API",{cpf_cnpj},e.message)
@@ -730,62 +739,134 @@ async function send_template(phone_numbers_database){
 
 
 // --- LOGICA DE RESPUESTA & EMISIÓN NUEVA ---
-async function logicMostrarOfertas(res, cachedUser) {
-    const dividas = JSON.parse(cachedUser.dividas_json || '[]');
-    try{
-    if(!Array.isArray(dividas) && (dividas && typeof dividas=='object')){
-        dividas=[dividas]
-    }}
-    catch(e){
+async function logicMostrarOfertas(res, cachedUser, mostrarParcelas = false) {
+    // 1. PARSEO SEGURO DE DEUDAS (Igual que antes)
+    let dividas = [];
+    try {
+        const parsed = JSON.parse(cachedUser.dividas_json || '[]');
+        if (Array.isArray(parsed)) {
+            dividas = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+            dividas = [parsed];
+        }
+    } catch (e) {
         console.error("⚠️ Error parseando JSON de dividas:", e.message);
         dividas = [];
     }
+
+    // 2. PARSEO DE OPCIONES DE PAGO
     const sim = JSON.parse(cachedUser.simulacion_json || '{}');
-    const opcoes = sim.opcoesPagamento || [];
-    
-    // 1. Extraemos la lista de fechas. Según el PDF, es un array de strings [cite: 520, 522]
-    // Formateamos las fechas para que sean legibles (DD/MM/YYYY) quitando la parte de la hora "T00:00:00"
-    const fechasVencimiento = (sim.listaDataVencimento || [])
-        .map(fecha => {
-            if(!fecha) return null;
-            const [datePart] = fecha.split('T'); // Toma "2024-07-25" de "2024-07-25T00:00:00"
-            const [year, month, day] = datePart.split('-');
-            return `${day}/${month}/${year}`;
-        })
-        .filter(Boolean) // Elimina nulos si los hubiera
-        .join(', ');
+    const todasOpcoes = sim.opcoesPagamento || [];
 
-    let mdES = `Estado de cuenta:\n\n`;
-    let mdPT = ``;
+    // Separamos "À vista" (1 cuota) de "Parcelado" (> 1 cuota)
+    const ofertaAvista = todasOpcoes.find(o => o.qtdParcelas === 1);
+    const ofertasParceladas = todasOpcoes.filter(o => o.qtdParcelas > 1);
 
-    // Sección de Deudas
+    // Limpiamos el nombre (quitamos comillas si existen y tomamos el primer nombre para que suene natural)
+    let nombreRaw = cachedUser.nome ? cachedUser.nome.replace(/"/g, '') : '';
+    // Capitalizamos primera letra (Opcional, estético)
+    const nombreCliente = nombreRaw ? nombreRaw.charAt(0).toUpperCase() + nombreRaw.slice(1).toLowerCase() : 'Cliente';
+
+    // ---------------------------------------------------------
+    // CONSTRUCCIÓN DEL MENSAJE (PT - Portugués / ES - Español)
+    // ---------------------------------------------------------
+    let mdPT = "";
+    let mdES = "";
+
+    // --- PARTE 1: DETALLES DE LA DEUDA (Según imagen 1) ---
+    // Saludo
+    mdPT += `Obrigada pela confirmação ${nombreCliente}.\n\n`;
+    mdES += `Gracias por la confirmación ${nombreCliente}.\n\n`;
+
+    // Intro con icono de hoja
+    mdPT += `📄 Seguem as informações do contrato em aberto:\n\n`;
+    mdES += `📄 Aquí está la información del contrato pendiente:\n\n`;
+
+    // Detalles del contrato
     if (dividas.length > 0) {
-         dividas.forEach(d => {
-            // Usamos d.valor y d.contratos[0].numero [cite: 157, 178]
-            const numContrato = d.contratos?.[0]?.numero || d.numero || 'N/A';
-            mdES += `- R$ ${d.valor} (Contrato: ${numContrato})\n`;
-            mdPT += `- R$ ${d.valor} (Contrato: ${numContrato})\n`;
+        dividas.forEach(d => {
+            [cite_start]// Documentación: contrato.numero [cite: 184][cite_start], diasAtraso [cite: 185][cite_start], valor [cite: 188]
+            const contratoInfo = d.contratos?.[0] || {}; 
+            const numContrato = contratoInfo.numero || d.numero || 'N/A';
+            const diasAtraso = contratoInfo.diasAtraso || 0; 
+            const valorTotal = d.valor;
+
+            // Formato exacto de la imagen (Negritas en las etiquetas)
+            mdPT += `*Contrato :* ${numContrato}\n`;
+            mdPT += `*Dias em atraso:* ${diasAtraso}\n`;
+            mdPT += `*Saldo vencido:* R$ ${valorTotal}\n\n`;
+
+            mdES += `*Contrato :* ${numContrato}\n`;
+            mdES += `*Días de retraso:* ${diasAtraso}\n`;
+            mdES += `*Saldo vencido:* R$ ${valorTotal}\n\n`;
         });
     }
 
-    // 2. Agregamos las fechas de vencimiento al mensaje si existen
-    if (fechasVencimiento.length > 0) {
-        mdES += `\n📅 **Fechas de vencimiento disponibles:** ${fechasVencimiento}\n`;
-        mdPT += `\n📅 **Datas de vencimento disponíveis:** ${fechasVencimiento}\n`;
+    // --- PARTE 2: OFERTA (Según imagen 2) ---
+    
+    // CASO A: MOSTRAR SOLO À VISTA (Por defecto)
+    if (!mostrarParcelas) {
+        if (ofertaAvista) {
+            // Obtenemos valor y fecha
+            const valorAvista = ofertaAvista.valorTotalComCustas || ofertaAvista.valor; 
+            // Formatear fecha DD/MM/YYYY
+            const fechaRaw = ofertaAvista.dataVencimento || new Date().toISOString();
+            const fechaVencimiento = fechaRaw.split('T')[0].split('-').reverse().join('/');
+
+            // Encabezado de oferta
+            mdPT += `➡️ Aproveite a oportunidade e regularize seu contrato à vista:\n\n`;
+            mdES += `➡️ Aproveche la oportunidad y regularice su contrato al contado:\n\n`;
+
+            // Detalles con iconos de Bolsa y Calendario
+            mdPT += `💰 *Valor:* R$ ${valorAvista}\n`;
+            mdPT += `📅 *Vencimento:* ${fechaVencimiento}\n\n`;
+
+            mdES += `💰 *Valor:* R$ ${valorAvista}\n`;
+            mdES += `📅 *Vencimiento:* ${fechaVencimiento}\n\n`;
+
+            // Cierre persuasivo
+            mdPT += `Garanta esta condição exclusiva e evite novos encargos.\n`;
+            mdPT += `Podemos seguir com essa proposta?`;
+
+            mdES += `Garantice esta condición exclusiva y evite nuevos cargos.\n`;
+            mdES += `¿Podemos seguir con esta propuesta?`;
+
+        } else {
+            // Fallback si no hay contado
+            mdPT += "No momento não tenho uma oferta à vista disponível. Deseja ver opções parceladas?";
+            mdES += "Actualmente no tengo una oferta al contado disponible. ¿Desea ver opciones en cuotas?";
+        }
+    } 
+    
+    // CASO B: MOSTRAR PARCELAS (Si el usuario pide ver más)
+    else {
+        mdPT += `➡️ Aqui estão as opções de parcelamento disponíveis:\n\n`;
+        mdES += `➡️ Aquí están las opciones de cuotas disponibles:\n\n`;
+
+        if (ofertasParceladas.length > 0) {
+            ofertasParceladas.forEach((op, i) => {
+                const textoOp = op.texto || `${op.qtdParcelas}x de R$ ${op.valor}`;
+                const totalParcelado = op.valorTotalComCustas || (op.valor * op.qtdParcelas).toFixed(2);
+                
+                mdPT += `${i + 1}. **${textoOp}** (Total: R$ ${totalParcelado})\n`;
+                mdES += `${i + 1}. **${textoOp}** (Total: R$ ${totalParcelado})\n`;
+            });
+            
+            mdPT += `\nIndique o número da opção que prefere (ex: "Opção 2").`;
+            mdES += `\nIndique el número de la opción que prefiere (ej: "Opción 2").`;
+        } else {
+            mdPT += "Não há planos parcelados disponíveis.";
+            mdES += "No hay planes de cuotas disponibles.";
+        }
     }
 
-    mdES += `\n**Opciones:**\n`;
-    mdPT += `\nObrigada pela confirmação, ${cachedUser.nome ? cachedUser.nome.replace(/"/g, '') : ''}! Encontrei uma ótima oferta para negociar sua pendência\n\n**Opções:**\n`;
-
-    if (opcoes.length > 0) {
-        opcoes.forEach((op, i) => {
-            const val = op.valorTotalComCustas || op.valor;
-            mdES += `${i + 1}. ${op.texto} (R$ ${val})\n`;
-            mdPT += `${i + 1}. ${op.texto} (R$ ${val})\n`;
-        });
-    }
-
-    responder(res, 200, "Ofertas", "Ofertas", { dividas, opcoes, fechas_vencimiento: sim.listaDataVencimento }, mdES, mdPT);
+    // Enviamos la respuesta
+    responder(res, 200, "Ofertas", "Ofertas", { 
+        dividas, 
+        oferta_avista: ofertaAvista,
+        tiene_parcelas: ofertasParceladas.length > 0,
+        fechas_vencimiento: sim.listaDataVencimento 
+    }, mdES, mdPT);
 }
 
 async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
@@ -834,6 +915,11 @@ async function logicEmitirBoletoNuevo(req, res, phone, cachedUser) {
         if (!resEmitir.data.sucesso) throw new Error(resEmitir.data.msgRetorno);
 
         await updateGoogleSheet(phone, cachedUser.cpf, "BOT_BOLETO_GERADO");
+        //boleto pdf
+        const pdf= await apiNegocie.post('/api/v5/download-boleto',{
+            headers:{'Authorization': `Bearer ${token}`}
+        })
+
         const boleto = resEmitir.data;
         
         const mdES = `✅ Code: \`${boleto.linhaDigitavel}\`\nValor: R$ ${boleto.valorTotal}`;
