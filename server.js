@@ -385,12 +385,12 @@ async function logicLiveCheck(res, phone, cpf_cnpj,try_cpf,opt) {
         
     }catch{
         let number=+try_cpf
-        console.log(`intento ${number}`);
+        console.log(`   intento ${number}`);
         if (number<3){
                 return responder(res,200,"","",{},"Por favor escribe un cpf valido","Por favor, insira um número CPF válido.");
             }else{
                 enviarReporteEmail(phone,"Transbordo - Usuário não identificado",{cpf_cnpj},"");
-                return responder(res,200,"","",{},"Has intentado demasiadas veces, te pondremos en contacto con un asesor humano","Você já tentou muitas vezes, vamos colocá-lo em contato com um consultor humano. favor, insira um número CPF válido.");
+                return responder(res,200,"","",{},"Has intentado demasiadas veces, te pondremos en contacto con un asesor humano");
             }
     }
     
