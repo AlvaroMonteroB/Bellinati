@@ -57,7 +57,7 @@ async function updateGoogleSheet(phone, cpf, tag) {
         let valueToWrite = "✅"; 
 
         // Mapeo de Tags a Columnas
-        if (tag.toLowerCase().includes("transbordo")) {
+        if (tag.includes("Transbordo")) {
             columnToMark = "Tag Transbordo";
             valueToWrite = tag; 
         } 
@@ -282,9 +282,13 @@ async function enviarReporteEmail(raw_phone, tag, dadosCliente, erroDetalhe = nu
 }
 
 async function getAuthToken(cpf_cnpj) {
+    console.log("Autenticacion")
     const res = await apiAuth.post('/api/Login/v5/Authentication', {
         AppId: process.env.API_APP_ID, AppPass: process.env.API_APP_PASS, Usuario: cpf_cnpj
     });
+    if(!res.data.token){
+        
+    }
     return res.data.token || res.data.access_token;
 }
 
@@ -536,7 +540,6 @@ app.post('/api/live-check', async (req, res) => {
     try {
         const cachedUser = await getFromCache(rawPhone);
         
-        
         // A. SI YA EXISTE EN CACHE Y CPF COINCIDE -> USAR CACHE
         if (cachedUser && cachedUser.cpf === cpf_cnpj) {
             console.log("⚡ Usuario en cache, retornando datos locales.");
@@ -568,6 +571,8 @@ app.post('/api/live-check', async (req, res) => {
             }
 
             return logicMostrarOfertas(res, cachedUser);
+        }else if(cachedUser && try_cpf>3){
+            return responder(res,200,"","",{},"Por favor escribe un cpf Por favor escribe un cpf valido","Por favor, confirme a identidade deste número de telefone com o número CPF correspondente.")
         }
 
         // B. SI NO EXISTE -> LLAMADA EN VIVO
