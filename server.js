@@ -289,7 +289,7 @@ async function getAuthToken(cpf_cnpj) {
     if(!res.data.token){
         console.log("No hay token")
     }
-    return res.data.token || res.data.access_token;
+    return res.data.token ;
 }
 
 // ==========================================
@@ -383,8 +383,14 @@ async function logicLiveCheck(res, phone, cpf_cnpj,try_cpf,opt) {
     try {
         const token = await getAuthToken(cpf_cnpj);
         let number=+try_cpf
-        if (number>3 && token==null){
-            return responder(res,200,"","",{},"Por favor escribe un cpf valido","Por favor, insira um número CPF válido.");
+        if (!token){
+            if (number<3){
+                return responder(res,200,"","",{},"Por favor escribe un cpf valido","Por favor, insira um número CPF válido.");
+            }else{
+                enviarReporteEmail(phone,"Transbordo - Usuário não identificado",{cpf_cnpj},"");
+                return responder(res,200,"","",{},"Has intentado demasiadas veces, te pondremos en contacto con un asesor humano","Você já tentou muitas vezes, vamos colocá-lo em contato com um consultor humano. favor, insira um número CPF válido.");
+            }
+            
         }
         
         // 1. Credores
@@ -392,6 +398,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj,try_cpf,opt) {
         const nombreCliente = resCred.data.nome || null;
         if (!resCred.data.credores?.length) {
             const tag = "Transbordo - Credor não encontrado";
+            enviarReporteEmail(phone,tag,{cpf_cnpj})
             await saveToCache(phone, cpf_cnpj,nombreCliente,null, resCred.data, [], {}, tag);
             await updateGoogleSheet(phone,cpf_cnpj,tag)
             return responder(
