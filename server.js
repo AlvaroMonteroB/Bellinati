@@ -532,7 +532,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj,try_cpf,opt) {
 
 // 1. LIVE CHECK (Entrada Principal para nuevos usuarios)
 app.post('/api/live-check', async (req, res) => {
-    const { function_call_username, cpf_cnpj,try_cpf, opt } = req.body;
+    const { function_call_username, cpf_cnpj,try_cpf, mostrarParcelas } = req.body;
     const rawPhone = function_call_username?.includes("--") ? function_call_username.split("--").pop() : function_call_username;
 
     if (!cpf_cnpj) return responder(res, 200, "Falta CPF", "Falta CPF", {}, "Por favor envía tu CPF.", "Por favor envie seu CPF.");
@@ -576,7 +576,7 @@ app.post('/api/live-check', async (req, res) => {
         }
 
         // B. SI NO EXISTE -> LLAMADA EN VIVO
-        await logicLiveCheck(res, rawPhone, cpf_cnpj,try_cpf,opt);
+        await logicLiveCheck(res, rawPhone, cpf_cnpj,try_cpf,mostrarParcelas);
 
     } catch (e) {
         await enviarReporteEmail(rawPhone,"Tag Erro - API",{cpf_cnpj},e.message)
