@@ -304,7 +304,7 @@ async function procesarYGuardarUsuario(phone, userData) {
             token = await getAuthToken(userData.cpf_cnpj);
         } catch (e) {
             const tag = "Transbordo - Usuário não identificado";
-            await saveToCache(phone, userData.cpf_cnpj,null,null,null, {}, [], {}, tag, e.message);
+            await saveToCache(phone, userData.cpf_cnpj,null,null,null, {}, [], tag, e.message);
             return false;
         }
 
@@ -379,19 +379,23 @@ async function logicLiveCheck(res, phone, cpf_cnpj,try_cpf,opt) {
     
     // Tag Inicial en Excel
     await updateGoogleSheet(phone, cpf_cnpj, "Tag Confirmação CPF");
-
-    try {
-        const token = await getAuthToken(cpf_cnpj);
+    const token=null;
+    try{
+        token = await getAuthToken(cpf_cnpj);
+        
+    }catch{
         let number=+try_cpf
-        if (!token){
-            if (number<3){
+        if (number<3){
                 return responder(res,200,"","",{},"Por favor escribe un cpf valido","Por favor, insira um número CPF válido.");
             }else{
                 enviarReporteEmail(phone,"Transbordo - Usuário não identificado",{cpf_cnpj},"");
                 return responder(res,200,"","",{},"Has intentado demasiadas veces, te pondremos en contacto con un asesor humano","Você já tentou muitas vezes, vamos colocá-lo em contato com um consultor humano. favor, insira um número CPF válido.");
             }
-            
-        }
+    }
+    
+
+    try {
+        
         
         // 1. Credores
         const resCred = await apiNegocie.get('/api/v5/busca-credores', { headers: { 'Authorization': `Bearer ${token}` } });
@@ -399,7 +403,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj,try_cpf,opt) {
         if (!resCred.data.credores?.length) {
             const tag = "Transbordo - Credor não encontrado";
             enviarReporteEmail(phone,tag,{cpf_cnpj})
-            await saveToCache(phone, cpf_cnpj,nombreCliente,null, resCred.data, [], {}, tag);
+            await saveToCache(phone, cpf_cnpj,nombreCliente,null, {}, [], {}, tag);
             await updateGoogleSheet(phone,cpf_cnpj,tag)
             return responder(
                             res, 
@@ -527,7 +531,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj,try_cpf,opt) {
 
     } catch (error) {
         const tag = "Transbordo - Erro Genérico";
-        await saveToCache(phone, cpf_cnpj, {}, [], {}, tag, error.message);
+        await saveToCache(phone, cpf_cnpj,null,null,null ,{}, [], tag, error.message,null);
         await enviarReporteEmail(phone, tag, { cpf_cnpj }, error.message);
         handleApiError(res, error, "Error Live Check", "Erro Live Check");
     }
