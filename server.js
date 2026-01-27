@@ -385,6 +385,7 @@ async function logicLiveCheck(res, phone, cpf_cnpj,try_cpf,opt) {
         
     }catch{
         let number=+try_cpf
+        console.log(`intento ${number}`);
         if (number<3){
                 return responder(res,200,"","",{},"Por favor escribe un cpf valido","Por favor, insira um número CPF válido.");
             }else{
