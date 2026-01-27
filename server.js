@@ -57,7 +57,7 @@ async function updateGoogleSheet(phone, cpf, tag) {
         let valueToWrite = "✅"; 
 
         // Mapeo de Tags a Columnas
-        if (tag.includes("Transbordo")) {
+        if (tag.toLowerCase().includes("Transbordo")) {
             columnToMark = "Tag Transbordo";
             valueToWrite = tag; 
         } 
@@ -287,7 +287,7 @@ async function getAuthToken(cpf_cnpj) {
         AppId: process.env.API_APP_ID, AppPass: process.env.API_APP_PASS, Usuario: cpf_cnpj
     });
     if(!res.data.token){
-        
+        console.log("No hay token")
     }
     return res.data.token || res.data.access_token;
 }
